@@ -41,6 +41,10 @@ struct SamplerInner<S, E> {
     /// We need fast access to the last event for each span.
     last_event: Slab<atomic::AtomicU64>,
 
+    // how many references are there to each span id?
+    // needed so we know when to reclaim
+    refcount: Slab<atomic::AtomicUsize>,
+
     // note that many span::Ids can map to the same SpanGroupIdent
     spans: HashMap<span::Id, SpanGroupIdent<S>>,
 
@@ -55,6 +59,7 @@ where
     fn default() -> Self {
         SamplerInner {
             last_event: Default::default(),
+            refcount: Default::default(),
             spans: Default::default(),
             recorders: Default::default(),
         }
@@ -188,6 +193,8 @@ where
         let id = inner
             .last_event
             .insert(atomic::AtomicU64::new(self.time.now()));
+        let id2 = inner.refcount.insert(atomic::AtomicUsize::new(1));
+        assert_eq!(id, id2);
         let id = span::Id::from_u64(id as u64);
         let sgi = SpanGroupIdent {
             callsite: span.metadata().callsite(),
@@ -238,7 +245,25 @@ where
         })
     }
 
-    // TODO: drop_span to reclaim from Slab
+    fn clone_span(&self, span: &span::Id) -> span::Id {
+        let inner = self.shared.read().unwrap();
+        inner.refcount[span.into_u64() as usize].fetch_add(1, atomic::Ordering::SeqCst);
+        span.clone()
+    }
+
+    fn drop_span(&self, span: span::Id) {
+        if 0 == self.shared.read().unwrap().refcount[span.into_u64() as usize]
+            .fetch_sub(1, atomic::Ordering::SeqCst)
+        {
+            // span has ended!
+            // reclaim its id
+            let mut inner = self.shared.write().unwrap();
+            inner.last_event.remove(span.into_u64() as usize);
+            inner.refcount.remove(span.into_u64() as usize);
+            inner.spans.remove(&span);
+            // NOTE: we _keep_ the SpanGroupIdent in place, since it is probably used by other spans
+        }
+    }
 }
 
 impl<S, E> Drop for Sampler<S, E>
