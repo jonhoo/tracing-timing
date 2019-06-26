@@ -96,7 +96,7 @@ where
 {
     fn time_event(&self, span: &span::Id) -> Option<u64> {
         let now = self.time.now();
-        let previous = self.shared.read().unwrap().last_event[span.into_u64() as usize]
+        let previous = self.shared.read().unwrap().last_event[span.into_u64() as usize - 1]
             .swap(now, atomic::Ordering::AcqRel);
         if previous > now {
             // someone else recorded a sample _just_ now
@@ -188,7 +188,7 @@ where
             .insert(atomic::AtomicU64::new(self.time.now()));
         let id2 = inner.refcount.insert(atomic::AtomicUsize::new(1));
         assert_eq!(id, id2);
-        let id = span::Id::from_u64(id as u64);
+        let id = span::Id::from_u64(id as u64 + 1);
         let sgi = SpanGroupIdent {
             callsite: span.metadata().callsite(),
             group: self.span_group.group(span),
@@ -240,19 +240,19 @@ where
 
     fn clone_span(&self, span: &span::Id) -> span::Id {
         let inner = self.shared.read().unwrap();
-        inner.refcount[span.into_u64() as usize].fetch_add(1, atomic::Ordering::SeqCst);
+        inner.refcount[span.into_u64() as usize - 1].fetch_add(1, atomic::Ordering::SeqCst);
         span.clone()
     }
 
     fn drop_span(&self, span: span::Id) {
-        if 0 == self.shared.read().unwrap().refcount[span.into_u64() as usize]
+        if 0 == self.shared.read().unwrap().refcount[span.into_u64() as usize - 1]
             .fetch_sub(1, atomic::Ordering::SeqCst)
         {
             // span has ended!
             // reclaim its id
             let mut inner = self.shared.write().unwrap();
-            inner.last_event.remove(span.into_u64() as usize);
-            inner.refcount.remove(span.into_u64() as usize);
+            inner.last_event.remove(span.into_u64() as usize - 1);
+            inner.refcount.remove(span.into_u64() as usize - 1);
             inner.spans.remove(&span);
             // NOTE: we _keep_ the SpanGroupIdent in place, since it is probably used by other spans
         }
