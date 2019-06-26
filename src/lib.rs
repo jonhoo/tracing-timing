@@ -16,24 +16,12 @@ thread_local! {
     static MYTID: RefCell<Option<usize>> = RefCell::new(None);
 }
 
-#[derive(Debug, Clone, Hash, Eq, PartialEq)]
-pub struct SpanGroupIdent<G> {
-    callsite: self::callsite::Identifier,
-    group: G,
-}
-
-impl<G> SpanGroupIdent<G> {
-    pub fn group(&self) -> &G {
-        &self.group
-    }
-}
-
 mod builder;
 pub use builder::Builder;
 pub mod group;
 
-type Map<S, E, T> = HashMap<SpanGroupIdent<S>, HashMap<E, T>>;
-pub type Histograms<S, E> = HashMap<SpanGroupIdent<S>, HashMap<E, SyncHistogram<u64>>>;
+type Map<S, E, T> = HashMap<S, HashMap<E, T>>;
+pub type Histograms<S, E> = HashMap<S, HashMap<E, SyncHistogram<u64>>>;
 
 pub trait SpanGroup {
     type Id;
@@ -53,8 +41,8 @@ struct SamplerInner<S, E> {
     // needed so we know when to reclaim
     refcount: Slab<atomic::AtomicUsize>,
 
-    // note that many span::Ids can map to the same SpanGroupIdent
-    spans: HashMap<span::Id, SpanGroupIdent<S>>,
+    // note that many span::Ids can map to the same S
+    spans: HashMap<span::Id, S>,
 
     // (S + callsite) => E => TID => Recorder
     recorders: Map<S, E, ThreadLocalRecorder>,
@@ -101,7 +89,7 @@ where
     S: Hash + Eq,
     E: Hash + Eq,
 {
-    fn make(&mut self, span_group: SpanGroupIdent<S>, event_group: E) -> Recorder<u64> {
+    fn make(&mut self, span_group: S, event_group: E) -> Recorder<u64> {
         let nh = &mut self.new_histogram;
         self.histograms
             .entry(span_group)
@@ -177,7 +165,7 @@ where
             .get(&eid)
             .map(|ir| ir.recorder())
             .ok_or_else(|| {
-                // if there wasn't one, we need the SpanGroupIdent for later
+                // if there wasn't one, we need the span group for later
                 inner.spans[span].clone()
             });
 
@@ -259,18 +247,15 @@ where
         let id2 = inner.refcount.insert(atomic::AtomicUsize::new(1));
         assert_eq!(id, id2);
         let id = span::Id::from_u64(id as u64 + 1);
-        let sgi = SpanGroupIdent {
-            callsite: span.metadata().callsite(),
-            group: self.span_group.group(span),
-        };
-        inner.spans.insert(id.clone(), sgi.clone());
+        let sg = self.span_group.group(span);
+        inner.spans.insert(id.clone(), sg.clone());
         inner
             .recorders
-            .entry(sgi.clone())
+            .entry(sg.clone())
             .or_insert_with(HashMap::default);
         inner
             .idle_recorders
-            .entry(sgi)
+            .entry(sg)
             .or_insert_with(HashMap::default);
         id
     }
@@ -331,7 +316,7 @@ where
             inner.last_event.remove(span.into_u64() as usize - 1);
             inner.refcount.remove(span.into_u64() as usize - 1);
             inner.spans.remove(&span);
-            // NOTE: we _keep_ the SpanGroupIdent in place, since it is probably used by other spans
+            // we _keep_ the entry in inner.recorders in place, since it may be used by other spans
         }
     }
 }
@@ -415,9 +400,9 @@ mod test {
         std::thread::sleep(std::time::Duration::from_millis(500));
         _type_of_s = d.downcast_ref();
         _type_of_s.unwrap().with_histograms(|hs| {
-            assert!(hs.keys().any(|k| *k.group() == "foo"));
+            assert!(hs.keys().any(|k| *k == "foo"));
             for (sk, hs) in hs {
-                assert_eq!(*sk.group(), "foo");
+                assert_eq!(*sk, "foo");
                 assert!(hs.keys().any(|k| k == "tracing_metrics::test"));
                 assert_eq!(hs.len(), 1);
                 for (ek, h) in hs {
@@ -425,7 +410,7 @@ mod test {
                     for v in h.iter_recorded() {
                         eprintln!(
                             "{:?} {:?} {}'th percentile of data is {} with {} samples",
-                            sk.group(),
+                            sk,
                             ek,
                             v.percentile(),
                             v.value_iterated_to(),
@@ -458,9 +443,9 @@ mod test {
         std::thread::sleep(std::time::Duration::from_millis(500));
         _type_of_s = d.downcast_ref();
         _type_of_s.unwrap().with_histograms(|hs| {
-            assert!(hs.keys().any(|k| *k.group() == "foo"));
+            assert!(hs.keys().any(|k| *k == "foo"));
             for (sk, hs) in hs {
-                assert_eq!(*sk.group(), "foo");
+                assert_eq!(*sk, "foo");
                 assert!(hs.keys().any(|k| k == "fast"));
                 assert!(hs.keys().any(|k| k == "slow"));
                 assert_eq!(hs.len(), 2);
@@ -478,7 +463,7 @@ mod test {
                     for v in h.iter_recorded() {
                         eprintln!(
                             "{:?} {:?} {}'th percentile of data is {} with {} samples",
-                            sk.group(),
+                            sk,
                             ek,
                             v.percentile(),
                             v.value_iterated_to(),
