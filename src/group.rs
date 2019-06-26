@@ -1,0 +1,107 @@
+use super::EventGroup;
+use super::SpanGroup;
+use std::borrow::Cow;
+use std::fmt::Write;
+use tokio_trace_core::*;
+
+#[derive(Default, Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ByTarget;
+
+impl SpanGroup for ByTarget {
+    type Id = String;
+    fn group(&self, a: &span::Attributes) -> Self::Id {
+        a.metadata().target().to_string()
+    }
+}
+
+impl EventGroup for ByTarget {
+    type Id = String;
+    fn group(&self, e: &Event) -> Self::Id {
+        e.metadata().target().to_string()
+    }
+}
+
+#[derive(Default, Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ByName;
+
+impl SpanGroup for ByName {
+    type Id = &'static str;
+    fn group(&self, a: &span::Attributes) -> Self::Id {
+        a.metadata().name()
+    }
+}
+
+impl EventGroup for ByName {
+    type Id = String;
+    fn group(&self, e: &Event) -> Self::Id {
+        e.metadata().name().to_string()
+    }
+}
+
+#[derive(Default, Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ByMessage;
+
+impl EventGroup for ByMessage {
+    type Id = String;
+    fn group(&self, e: &Event) -> Self::Id {
+        EventGroup::group(&ByField(Cow::Borrowed("message")), e)
+    }
+}
+
+#[derive(Default, Clone, Debug, Eq, PartialEq)]
+pub struct ByField(Cow<'static, str>);
+
+struct ByFieldVisitor<'a> {
+    field: &'a ByField,
+    value: String,
+}
+
+impl<'a> field::Visit for ByFieldVisitor<'a> {
+    fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+        if field.name() == &*self.field.0 {
+            write!(&mut self.value, "{:?}", value).unwrap();
+        }
+    }
+
+    fn record_i64(&mut self, field: &Field, value: i64) {
+        if field.name() == &*self.field.0 {
+            write!(&mut self.value, "{}", value).unwrap();
+        }
+    }
+
+    fn record_u64(&mut self, field: &Field, value: u64) {
+        if field.name() == &*self.field.0 {
+            write!(&mut self.value, "{}", value).unwrap();
+        }
+    }
+
+    fn record_str(&mut self, field: &Field, value: &str) {
+        if field.name() == &*self.field.0 {
+            write!(&mut self.value, "{}", value).unwrap();
+        }
+    }
+}
+
+impl SpanGroup for ByField {
+    type Id = String;
+    fn group(&self, a: &span::Attributes) -> Self::Id {
+        let mut visitor = ByFieldVisitor {
+            field: self,
+            value: String::new(),
+        };
+        a.record(&mut visitor);
+        visitor.value
+    }
+}
+
+impl EventGroup for ByField {
+    type Id = String;
+    fn group(&self, e: &Event) -> Self::Id {
+        let mut visitor = ByFieldVisitor {
+            field: self,
+            value: String::new(),
+        };
+        e.record(&mut visitor);
+        visitor.value
+    }
+}

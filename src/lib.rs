@@ -20,6 +20,10 @@ struct SpanGroupIdent<G> {
     group: G,
 }
 
+mod builder;
+pub use builder::Builder;
+pub mod group;
+
 pub trait SpanGroup {
     type Id;
     fn group(&self, a: &span::Attributes) -> Self::Id;
@@ -39,6 +43,19 @@ struct SamplerInner<S, E> {
 
     // (S + callsite) => E => TID => Recorder
     recorders: HashMap<SpanGroupIdent<S>, HashMap<E, HashMap<usize, UnsafeCell<Recorder<u64>>>>>,
+}
+
+impl<S, E> Default for SamplerInner<S, E>
+where
+    S: Eq + Hash,
+{
+    fn default() -> Self {
+        SamplerInner {
+            last_event: Default::default(),
+            spans: Default::default(),
+            recorders: Default::default(),
+        }
+    }
 }
 
 /// For each event, we record the time between it and the preceeding event in the same span.
