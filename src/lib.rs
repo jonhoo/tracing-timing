@@ -8,6 +8,8 @@ use slab::Slab;
 use std::cell::{RefCell, UnsafeCell};
 use std::collections::hash_map::Entry;
 use std::hash::Hash;
+use std::marker::PhantomData;
+use std::ops::{Deref, DerefMut};
 use std::sync::{atomic, Mutex};
 use tokio_trace_core::*;
 
@@ -49,7 +51,7 @@ struct SamplerInner<S, E> {
     spans: HashMap<span::Id, SpanGroupIdent<S>>,
 
     // (S + callsite) => E => TID => Recorder
-    recorders: HashMap<SpanGroupIdent<S>, HashMap<E, HashMap<usize, UnsafeCell<Recorder<u64>>>>>,
+    recorders: HashMap<SpanGroupIdent<S>, HashMap<E, ThreadLocalRecorder>>,
 }
 
 impl<S, E> Default for SamplerInner<S, E>
@@ -69,7 +71,7 @@ where
 /// For each event, we record the time between it and the preceeding event in the same span.
 /// We record that time difference in a histogram keyed by the callsite of the event's span **and**
 /// the span's _group_ as dictated by `Group`.
-pub struct Sampler<S, E>
+pub struct Sampler<S = group::ByName, E = group::ByTarget>
 where
     S: SpanGroup,
     E: EventGroup,
@@ -110,16 +112,7 @@ where
         F: FnOnce(&mut Recorder<u64>),
     {
         // who are we?
-        let tid = MYTID.with(|mytid| {
-            let mut mytid = mytid.borrow_mut();
-            if let Some(ref mytid) = *mytid {
-                *mytid
-            } else {
-                let tid = TID.with(|tid| tid.fetch_add(1, atomic::Ordering::AcqRel));
-                *mytid = Some(tid);
-                tid
-            }
-        });
+        let tid = ThreadId::default();
         // first, get the recorder i
         let eid = self.event_group.group(event);
         let inner = self.shared.read().unwrap();
@@ -149,7 +142,7 @@ where
             .get_mut(&inner.spans[span])
             .unwrap()
             .entry(eid)
-            .or_insert_with(HashMap::default)
+            .or_insert_with(ThreadLocalRecorder::default)
             .entry(tid);
 
         if let Entry::Vacant(e) = e {
@@ -275,3 +268,50 @@ where
 {
     fn drop(&mut self) {}
 }
+
+#[derive(Default)]
+struct ThreadLocalRecorder(HashMap<ThreadId, UnsafeCell<Recorder<u64>>>);
+
+impl Deref for ThreadLocalRecorder {
+    type Target = HashMap<ThreadId, UnsafeCell<Recorder<u64>>>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for ThreadLocalRecorder {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+#[derive(Hash, Eq, PartialEq)]
+#[repr(transparent)]
+struct ThreadId {
+    tid: usize,
+    _notsend: PhantomData<UnsafeCell<()>>,
+}
+
+impl Default for ThreadId {
+    fn default() -> Self {
+        MYTID.with(|mytid| {
+            let mut mytid = mytid.borrow_mut();
+            if let Some(ref mytid) = *mytid {
+                ThreadId {
+                    tid: *mytid,
+                    _notsend: PhantomData,
+                }
+            } else {
+                let tid = TID.with(|tid| tid.fetch_add(1, atomic::Ordering::AcqRel));
+                *mytid = Some(tid);
+                ThreadId {
+                    tid: tid,
+                    _notsend: PhantomData,
+                }
+            }
+        })
+    }
+}
+
+unsafe impl Send for ThreadLocalRecorder {}
+unsafe impl Sync for ThreadLocalRecorder {}
