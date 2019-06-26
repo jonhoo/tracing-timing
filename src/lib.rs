@@ -4,7 +4,7 @@
 //! information. More concretely, given code like this:
 //!
 //! ```rust
-//! use tokio_trace::*;
+//! use tracing::*;
 //! use tracing_metrics::{Builder, Histogram};
 //! let subscriber = Builder::from(|| Histogram::new_with_max(1_000_000, 2).unwrap()).build();
 //! let dispatcher = Dispatch::new(subscriber);
@@ -62,7 +62,7 @@
 //! The mystical black magic invocations you need to issue are as follows:
 //!
 //! ```rust
-//! use tokio_trace::*;
+//! use tracing::*;
 //! use tracing_metrics::{Builder, Histogram};
 //! let subscriber = Builder::from(|| Histogram::new_with_max(1_000_000, 2).unwrap()).build();
 //! // magic #1:
@@ -115,7 +115,7 @@ use std::hash::Hash;
 use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 use std::sync::{atomic, Mutex};
-use tokio_trace_core::*;
+use tracing_core::*;
 
 thread_local! {
     static SPAN: RefCell<Option<span::Id>> = RefCell::new(None);
@@ -509,7 +509,7 @@ unsafe impl Sync for ThreadLocalRecorder {}
 #[cfg(test)]
 mod test {
     use super::*;
-    use tokio_trace::*;
+    use tracing::*;
 
     #[test]
     fn by_target() {

@@ -5,7 +5,7 @@ authors = ["Jon Gjengset <jon@thesquareplanet.com>"]
 edition = "2018"
 
 [dependencies]
-tokio-trace-core = { git = "https://github.com/tokio-rs/tokio.git" }
+tracing-core = { git = "https://github.com/tokio-rs/tracing.git" }
 hdrhistogram = "6.3.2"
 slab = "0.4"
 quanta = "0.3"
@@ -13,5 +13,5 @@ fnv = "1"
 crossbeam = "0.7"
 
 [dev-dependencies]
-tokio-trace = { git = "https://github.com/tokio-rs/tokio.git" }
+tracing = { git = "https://github.com/tokio-rs/tracing.git" }
 rand = "0.6"

@@ -4,7 +4,7 @@ use super::EventGroup;
 use super::SpanGroup;
 use std::borrow::Cow;
 use std::fmt::Write;
-use tokio_trace_core::*;
+use tracing_core::*;
 
 /// Group spans/events by their configured `target`.
 ///
