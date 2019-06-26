@@ -1,13 +1,12 @@
 use crate::{group, EventGroup, Sampler, SpanGroup};
-use crossbeam::sync::ShardedLock;
-use hdrhistogram::{sync::SyncHistogram, Histogram};
+use hdrhistogram::Histogram;
 use std::hash::Hash;
 
 pub struct Builder<S = group::ByName, E = group::ByTarget> {
     span_group: S,
     event_group: E,
     time: quanta::Clock,
-    histogram: SyncHistogram<u64>,
+    histogram: Histogram<u64>,
 }
 
 impl From<Histogram<u64>> for Builder<group::ByName, group::ByTarget> {
@@ -52,12 +51,14 @@ impl<S, E> Builder<S, E> {
         S::Id: Hash + Eq,
         E::Id: Hash + Eq,
     {
+        let histogram = self.histogram.into_sync();
         Sampler {
             span_group: self.span_group,
             event_group: self.event_group,
             time: self.time,
-            histogram: self.histogram,
-            shared: ShardedLock::default(),
+            recorder: histogram.recorder().into_idle(),
+            histogram: histogram.into(),
+            shared: Default::default(),
         }
     }
 }

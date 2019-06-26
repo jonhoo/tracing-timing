@@ -1,11 +1,14 @@
 use crossbeam::sync::ShardedLock;
 use fnv::FnvHashMap as HashMap;
-use hdrhistogram::sync::Recorder;
+use hdrhistogram::{
+    sync::Recorder,
+    {Histogram, SyncHistogram},
+};
 use slab::Slab;
 use std::cell::{RefCell, UnsafeCell};
 use std::collections::hash_map::Entry;
 use std::hash::Hash;
-use std::sync::atomic;
+use std::sync::{atomic, Mutex};
 use tokio_trace_core::*;
 
 thread_local! {
@@ -71,9 +74,10 @@ where
     span_group: S,
     event_group: E,
     time: quanta::Clock,
-    histogram: hdrhistogram::sync::SyncHistogram<u64>,
 
     shared: ShardedLock<SamplerInner<S::Id, E::Id>>,
+    recorder: hdrhistogram::sync::IdleRecorder<Recorder<u64>, u64>,
+    histogram: Mutex<SyncHistogram<u64>>,
 }
 
 impl<S, E> Sampler<S, E>
@@ -123,13 +127,19 @@ where
         }
 
         // need to create entry for recorder where there was none
-        // to do that, we need to take the write lock
+        // to do that, we need to take the write lock, so we must drop the read lock
         drop(tmp);
         drop(inner);
+
+        // we're going to need a new recorder
+        let mut recorder = self.recorder.recorder();
+        f(&mut recorder);
+
+        // store the recorder back for next time
         let mut inner = self.shared.write().unwrap();
         let inner = &mut *inner;
 
-        let recorder = inner
+        let e = inner
             .recorders
             .get_mut(&inner.spans[span])
             .unwrap()
@@ -137,9 +147,7 @@ where
             .or_insert_with(HashMap::default)
             .entry(tid);
 
-        if let Entry::Vacant(e) = recorder {
-            let mut recorder = self.histogram.recorder();
-            f(&mut recorder);
+        if let Entry::Vacant(e) = e {
             e.insert(UnsafeCell::new(recorder));
         } else {
             // this should not be possible.
@@ -148,6 +156,19 @@ where
             // tid, no-one else should have filled it for us.
             unreachable!();
         }
+    }
+
+    pub fn with_histogram<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut Histogram<u64>) -> R,
+    {
+        // NOTE; we have to be careful not to deadlock here
+        // refresh() is going to wait for every _current_ Recorder to submit at least one more
+        // sample, so we need to make sure we're not preventing that! this lock is not taken by any
+        // other part of the subscriber, so we _should_ be all good.
+        let mut histogram = self.histogram.lock().unwrap();
+        histogram.refresh();
+        f(&mut *histogram)
     }
 }
 
@@ -216,6 +237,8 @@ where
             }
         })
     }
+
+    // TODO: drop_span to reclaim from Slab
 }
 
 impl<S, E> Drop for Sampler<S, E>
