@@ -385,40 +385,30 @@ mod test {
 
     #[test]
     fn it_works() {
-        let s = Builder::from(|| Histogram::new(3).unwrap()).build();
+        let s = Builder::from(|| Histogram::new_with_max(200_000_000, 1).unwrap()).build();
         let mut _type_of_s = if false { Some(&s) } else { None };
         let d = Dispatch::new(s);
         let d2 = d.clone();
         std::thread::spawn(move || {
             dispatcher::with_default(&d2, || loop {
                 trace_span!("foo").in_scope(|| {
-                    trace!("event");
                     std::thread::sleep(std::time::Duration::from_millis(100));
+                    trace!("event");
                 })
             })
         });
         std::thread::sleep(std::time::Duration::from_millis(500));
         _type_of_s = d.downcast_ref();
         _type_of_s.unwrap().with_histograms(|hs| {
-            assert!(hs.keys().any(|k| *k == "foo"));
-            for (sk, hs) in hs {
-                assert_eq!(*sk, "foo");
-                assert!(hs.keys().any(|k| k == "tracing_metrics::test"));
-                assert_eq!(hs.len(), 1);
-                for (ek, h) in hs {
-                    h.refresh();
-                    for v in h.iter_recorded() {
-                        eprintln!(
-                            "{:?} {:?} {}'th percentile of data is {} with {} samples",
-                            sk,
-                            ek,
-                            v.percentile(),
-                            v.value_iterated_to(),
-                            v.count_at_value()
-                        );
-                    }
-                }
-            }
+            assert_eq!(hs.len(), 1);
+            let hs = &mut hs.get_mut("foo").unwrap();
+            assert_eq!(hs.len(), 1);
+
+            let h = &mut hs.get_mut("tracing_metrics::test").unwrap();
+            h.refresh();
+            // ~= 100ms
+            assert!(h.value_at_quantile(0.5) > 50_000_000);
+            assert!(h.value_at_quantile(0.5) < 150_000_000);
         })
     }
 
@@ -443,35 +433,21 @@ mod test {
         std::thread::sleep(std::time::Duration::from_millis(500));
         _type_of_s = d.downcast_ref();
         _type_of_s.unwrap().with_histograms(|hs| {
-            assert!(hs.keys().any(|k| *k == "foo"));
-            for (sk, hs) in hs {
-                assert_eq!(*sk, "foo");
-                assert!(hs.keys().any(|k| k == "fast"));
-                assert!(hs.keys().any(|k| k == "slow"));
-                assert_eq!(hs.len(), 2);
-                for (ek, h) in hs {
-                    h.refresh();
-                    if ek == "fast" {
-                        // ~= 10ms
-                        assert!(h.value_at_quantile(0.5) > 5_000_000);
-                        assert!(h.value_at_quantile(0.5) < 15_000_000);
-                    } else if ek == "slow" {
-                        // ~= 100ms
-                        assert!(h.value_at_quantile(0.5) > 50_000_000);
-                        assert!(h.value_at_quantile(0.5) < 150_000_000);
-                    }
-                    for v in h.iter_recorded() {
-                        eprintln!(
-                            "{:?} {:?} {}'th percentile of data is {} with {} samples",
-                            sk,
-                            ek,
-                            v.percentile(),
-                            v.value_iterated_to(),
-                            v.count_at_value()
-                        );
-                    }
-                }
-            }
+            assert_eq!(hs.len(), 1);
+            let hs = &mut hs.get_mut("foo").unwrap();
+            assert_eq!(hs.len(), 2);
+
+            let h = &mut hs.get_mut("fast").unwrap();
+            h.refresh();
+            // ~= 10ms
+            assert!(h.value_at_quantile(0.5) > 5_000_000);
+            assert!(h.value_at_quantile(0.5) < 15_000_000);
+
+            let h = &mut hs.get_mut("slow").unwrap();
+            h.refresh();
+            // ~= 100ms
+            assert!(h.value_at_quantile(0.5) > 50_000_000);
+            assert!(h.value_at_quantile(0.5) < 150_000_000);
         })
     }
 }
