@@ -1,9 +1,6 @@
 use crossbeam::sync::ShardedLock;
 use fnv::FnvHashMap as HashMap;
-use hdrhistogram::{
-    sync::Recorder,
-    {Histogram, SyncHistogram},
-};
+use hdrhistogram::{sync::Recorder, Histogram, SyncHistogram};
 use slab::Slab;
 use std::cell::{RefCell, UnsafeCell};
 use std::collections::hash_map::Entry;
@@ -20,14 +17,23 @@ thread_local! {
 }
 
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
-struct SpanGroupIdent<G> {
+pub struct SpanGroupIdent<G> {
     callsite: self::callsite::Identifier,
     group: G,
+}
+
+impl<G> SpanGroupIdent<G> {
+    pub fn group(&self) -> &G {
+        &self.group
+    }
 }
 
 mod builder;
 pub use builder::Builder;
 pub mod group;
+
+type Map<S, E, T> = HashMap<SpanGroupIdent<S>, HashMap<E, T>>;
+pub type Histograms<S, E> = HashMap<SpanGroupIdent<S>, HashMap<E, SyncHistogram<u64>>>;
 
 pub trait SpanGroup {
     type Id;
@@ -51,7 +57,9 @@ struct SamplerInner<S, E> {
     spans: HashMap<span::Id, SpanGroupIdent<S>>,
 
     // (S + callsite) => E => TID => Recorder
-    recorders: HashMap<SpanGroupIdent<S>, HashMap<E, ThreadLocalRecorder>>,
+    recorders: Map<S, E, ThreadLocalRecorder>,
+
+    idle_recorders: Map<S, E, hdrhistogram::sync::IdleRecorder<Recorder<u64>, u64>>,
 }
 
 impl<S, E> Default for SamplerInner<S, E>
@@ -64,14 +72,50 @@ where
             refcount: Default::default(),
             spans: Default::default(),
             recorders: Default::default(),
+            idle_recorders: Default::default(),
         }
+    }
+}
+
+struct MasterHistograms<NH, S, E> {
+    new_histogram: NH,
+    histograms: Histograms<S, E>,
+}
+
+impl<NH, S, E> From<NH> for MasterHistograms<NH, S, E>
+where
+    S: Hash + Eq,
+    E: Hash + Eq,
+{
+    fn from(nh: NH) -> Self {
+        MasterHistograms {
+            new_histogram: nh,
+            histograms: Default::default(),
+        }
+    }
+}
+
+impl<NH, S, E> MasterHistograms<NH, S, E>
+where
+    NH: FnMut() -> Histogram<u64>,
+    S: Hash + Eq,
+    E: Hash + Eq,
+{
+    fn make(&mut self, span_group: SpanGroupIdent<S>, event_group: E) -> Recorder<u64> {
+        let nh = &mut self.new_histogram;
+        self.histograms
+            .entry(span_group)
+            .or_insert_with(HashMap::default)
+            .entry(event_group)
+            .or_insert_with(move || (nh)().into_sync())
+            .recorder()
     }
 }
 
 /// For each event, we record the time between it and the preceeding event in the same span.
 /// We record that time difference in a histogram keyed by the callsite of the event's span **and**
 /// the span's _group_ as dictated by `Group`.
-pub struct Sampler<S = group::ByName, E = group::ByTarget>
+pub struct Sampler<NH, S = group::ByName, E = group::ByTarget>
 where
     S: SpanGroup,
     E: EventGroup,
@@ -83,16 +127,16 @@ where
     time: quanta::Clock,
 
     shared: ShardedLock<SamplerInner<S::Id, E::Id>>,
-    recorder: hdrhistogram::sync::IdleRecorder<Recorder<u64>, u64>,
-    histogram: Mutex<SyncHistogram<u64>>,
+    histograms: Mutex<MasterHistograms<NH, S::Id, E::Id>>,
 }
 
-impl<S, E> Sampler<S, E>
+impl<NH, S, E> Sampler<NH, S, E>
 where
     S: SpanGroup,
     E: EventGroup,
-    S::Id: Hash + Eq,
-    E::Id: Hash + Eq,
+    S::Id: Clone + Hash + Eq,
+    E::Id: Clone + Hash + Eq,
+    NH: FnMut() -> Histogram<u64> + Send,
 {
     fn time_event(&self, span: &span::Id) -> Option<u64> {
         let now = self.time.now();
@@ -113,10 +157,10 @@ where
     {
         // who are we?
         let tid = ThreadId::default();
-        // first, get the recorder i
+
+        // fast path: sid/eid pair is known to this thread
         let eid = self.event_group.group(event);
         let inner = self.shared.read().unwrap();
-        // TODO: make event if not exist
         let tmp = &inner.recorders[&inner.spans[span]];
         if let Some(ref recorder) = tmp.get(&eid).and_then(|recorders| recorders.get(&tid)) {
             // we know no-one else has our TID
@@ -124,16 +168,42 @@ where
             return;
         }
 
-        // need to create entry for recorder where there was none
-        // to do that, we need to take the write lock, so we must drop the read lock
+        // slow path: either sid/eid pair was new, or it was new _to this thread_
+        // in either case, we need to create entry for recorder where there was none
+
+        // to avoid taking unnecessary locks later, let's short-cut if there is already an idle
+        // recorder available for this sid/eid pair
+        let recorder = inner.idle_recorders[&inner.spans[span]]
+            .get(&eid)
+            .map(|ir| ir.recorder())
+            .ok_or_else(|| {
+                // if there wasn't one, we need the SpanGroupIdent for later
+                inner.spans[span].clone()
+            });
+
+        // we're going to have to cache the recorder for next time
+        // to do that, we need to take the write lock, so we must first drop the read lock
         drop(tmp);
         drop(inner);
 
-        // we're going to need a new recorder
-        let mut recorder = self.recorder.recorder();
+        // we're going to need a recorder one way or another
+        let mut recorder = recorder.unwrap_or_else(|sgi| {
+            // there wasn't a recorder available for the sid/eid pair, so we need to make a new
+            // histogram for that pair and gets its recorder.
+            //
+            // note that we take care to take this lock while not holding any other locks!
+            //
+            // note also that we _may_ end up with multiple subscribers all deciding to take this
+            // lock if a new event group appears in multiple places at once. that will slow things
+            // down a little, but should not deadlock.
+            //
+            // the biggest concern with taking the lock here is deadlocking with `with_histogram`
+            // if the user decides to call `.refresh()` in there...
+            self.histograms.lock().unwrap().make(sgi, eid.clone())
+        });
         f(&mut recorder);
 
-        // store the recorder back for next time
+        // now time to cache the recorder for next time
         let mut inner = self.shared.write().unwrap();
         let inner = &mut *inner;
 
@@ -156,26 +226,26 @@ where
         }
     }
 
-    pub fn with_histogram<F, R>(&self, f: F) -> R
+    pub fn with_histograms<F, R>(&self, f: F) -> R
     where
-        F: FnOnce(&mut Histogram<u64>) -> R,
+        F: FnOnce(&mut Histograms<S::Id, E::Id>) -> R,
     {
-        // NOTE; we have to be careful not to deadlock here
-        // refresh() is going to wait for every _current_ Recorder to submit at least one more
-        // sample, so we need to make sure we're not preventing that! this lock is not taken by any
-        // other part of the subscriber, so we _should_ be all good.
-        let mut histogram = self.histogram.lock().unwrap();
-        histogram.refresh();
-        f(&mut *histogram)
+        // NOTE; we have to be careful about deadlocks here. if the user's f calls
+        // SyncHistogram::refresh(), it is going to wait for every _current_ Recorder to submit at
+        // least one more sample, so we need to make sure we're not preventing that! this lock is
+        // not taken by any other part of the subscriber, so we _should_ be all good.
+        let mut master = self.histograms.lock().unwrap();
+        f(&mut master.histograms)
     }
 }
 
-impl<S, E> Subscriber for Sampler<S, E>
+impl<NH, S, E> Subscriber for Sampler<NH, S, E>
 where
     S: SpanGroup + 'static,
     E: EventGroup + 'static,
     S::Id: Clone + Hash + Eq + 'static,
-    E::Id: Hash + Eq + 'static,
+    E::Id: Clone + Hash + Eq + 'static,
+    NH: FnMut() -> Histogram<u64> + Send + 'static,
 {
     fn enabled(&self, _: &Metadata) -> bool {
         true
@@ -194,7 +264,14 @@ where
             group: self.span_group.group(span),
         };
         inner.spans.insert(id.clone(), sgi.clone());
-        inner.recorders.entry(sgi).or_insert_with(HashMap::default);
+        inner
+            .recorders
+            .entry(sgi.clone())
+            .or_insert_with(HashMap::default);
+        inner
+            .idle_recorders
+            .entry(sgi)
+            .or_insert_with(HashMap::default);
         id
     }
 
@@ -259,7 +336,7 @@ where
     }
 }
 
-impl<S, E> Drop for Sampler<S, E>
+impl<NH, S, E> Drop for Sampler<NH, S, E>
 where
     S: SpanGroup,
     E: EventGroup,
