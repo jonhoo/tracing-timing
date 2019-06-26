@@ -14,3 +14,4 @@ crossbeam = "0.7"
 
 [dev-dependencies]
 tokio-trace = { git = "https://github.com/tokio-rs/tokio.git" }
+rand = "0.6"

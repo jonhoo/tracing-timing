@@ -1,9 +1,15 @@
+//! Commonly used span and event grouping mechanisms.
+
 use super::EventGroup;
 use super::SpanGroup;
 use std::borrow::Cow;
 use std::fmt::Write;
 use tokio_trace_core::*;
 
+/// Group spans/events by their configured `target`.
+///
+/// This is usually the module path where the span or event was created.
+/// See `Metadata::target` in `tracing` for details.
 #[derive(Default, Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ByTarget;
 
@@ -21,6 +27,10 @@ impl EventGroup for ByTarget {
     }
 }
 
+/// Group spans/events by their "name".
+///
+/// For spans, this is the string passed as the first argument to the various span tracing macros.
+/// For events, this is usually the source file and line number where the event was created.
 #[derive(Default, Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ByName;
 
@@ -38,6 +48,9 @@ impl EventGroup for ByName {
     }
 }
 
+/// Group events by their "message".
+///
+/// This is the string passed as the first argument to the various event tracing macros.
 #[derive(Default, Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ByMessage;
 
@@ -48,8 +61,12 @@ impl EventGroup for ByMessage {
     }
 }
 
+/// Group spans/events by the value of a particular field.
+///
+/// If a field by the contained name is found, its recorded value (usually its `Debug` value) is
+/// used as the grouping identifier. If the field is not found, an empty `String` is used.
 #[derive(Default, Clone, Debug, Eq, PartialEq)]
-pub struct ByField(Cow<'static, str>);
+pub struct ByField(pub Cow<'static, str>);
 
 struct ByFieldVisitor<'a> {
     field: &'a ByField,

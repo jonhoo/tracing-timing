@@ -1,6 +1,113 @@
+//! Inter-event timing metrics.
+//!
+//! This crate provides a `tracing::Subscriber` that keeps statistics on inter-event timing
+//! information. More concretely, given code like this:
+//!
+//! ```rust
+//! use tokio_trace::*;
+//! use tracing_metrics::{Builder, Histogram};
+//! let subscriber = Builder::from(|| Histogram::new_with_max(1_000_000, 2).unwrap()).build();
+//! let dispatcher = Dispatch::new(subscriber);
+//! dispatcher::with_default(&dispatcher, || {
+//!     trace_span!("request").in_scope(|| {
+//!         // do a little bit of work
+//!         trace!("fast");
+//!         // do a lot of work
+//!         trace!("slow");
+//!     })
+//! });
+//! eprintln!("FOO");
+//! ```
+//!
+//! You can produce something like this:
+//!
+//! ```text
+//! fast:
+//!   50µs |
+//!  100µs |
+//!  150µs | ****
+//!  200µs | ************
+//!  250µs | *************
+//!  300µs | *****
+//!  350µs | ****
+//!  400µs | *
+//!  450µs |
+//!  500µs |
+//!
+//! slow:
+//!  550µs |
+//!  600µs |
+//!  650µs | ******
+//!  700µs | **********************
+//!  750µs | *********
+//!  800µs | **
+//!  850µs | *
+//!  900µs |
+//! ```
+//!
+//! When [`Sampler`] is used as the `tracing::Dispatch`, the time between each event in a span is
+//! measured using [`quanta`], and is recorded in "[high dynamic range histograms]" using
+//! [`hdrhistogram`]'s multi-threaded recording facilities. The recorded metrics are grouped using
+//! the [`SpanGroup`] and [`EventGroup`] traits, allowing you to combine recorded statistics across
+//! spans and events.
+//!
+//! ## Extracting metrics
+//!
+//! The crate does not implement a mechanism for recording the resulting histograms. Instead, you
+//! can implement this as you see fit using [`Sampler::with_histograms`]. It gives you access to
+//! the histograms for all groups. Note that you must call `refresh()` on each histogram to see its
+//! latest values (see [`hdrhistogram::SyncHistogram`]).
+//!
+//! To access the histograms, you (currently) need to use `tracing::Dispatch::downcast_ref`.
+//! The mystical black magic invocations you need to issue are as follows:
+//!
+//! ```rust
+//! use tokio_trace::*;
+//! use tracing_metrics::{Builder, Histogram};
+//! let subscriber = Builder::from(|| Histogram::new_with_max(1_000_000, 2).unwrap()).build();
+//! // magic #1:
+//! let mut _type_of_subscriber = if false { Some(&subscriber) } else { None };
+//! let dispatch = Dispatch::new(subscriber);
+//! // ...
+//! // code that hands off clones of the dispatch
+//! // maybe to other threads
+//! // ...
+//! _type_of_subscriber = dispatch.downcast_ref();
+//! _type_of_subscriber.unwrap().with_histograms(|hs| {
+//!     for (span_group, hs) in hs {
+//!         for (event_group, h) in hs {
+//!             // make sure we see the latest samples:
+//!             h.refresh();
+//!             // print the median:
+//!             println!("{} -> {}: {}ns", span_group, event_group, h.value_at_quantile(0.5))
+//!         }
+//!     }
+//! });
+//! ```
+//!
+//! See the documentation for [`hdrhistogram`] for more on what you can do once you have the
+//! histograms.
+//!
+//! ## Grouping samples
+//!
+//! By default, [`Sampler`] groups samples by the "name" of the containing span and the "message"
+//! of the relevant event. These are the first string parameter you pass to each of the relevant
+//! tracing macros. You can override this behavior either by providing your own implementation of
+//! [`SpanGroup`] and [`EventGroup`] to [`Builder::spans`] and [`Builder::events`] respectively.
+//! There are also a number of pre-defined "groupers" in the [`group`] module that cover the most
+//! common cases.
+//!
+//!   [high dynamic range histograms]: https://hdrhistogram.github.io/HdrHistogram/
+//!   [`hdrhistogram`]: https://docs.rs/hdrhistogram/
+//!   [`quanta`]: https://docs.rs/quanta/
+//!   [`hdrhistogram::SyncHistogram`]: https://docs.rs/hdrhistogram/6/hdrhistogram/sync/struct.SyncHistogram.html
+//!
+
+#![deny(missing_docs)]
+
 use crossbeam::sync::ShardedLock;
 use fnv::FnvHashMap as HashMap;
-use hdrhistogram::{sync::Recorder, Histogram, SyncHistogram};
+use hdrhistogram::{sync::Recorder, SyncHistogram};
 use slab::Slab;
 use std::cell::{RefCell, UnsafeCell};
 use std::collections::hash_map::Entry;
@@ -18,23 +125,39 @@ thread_local! {
 
 mod builder;
 pub use builder::Builder;
+pub use hdrhistogram::Histogram;
+
 pub mod group;
 
 type Map<S, E, T> = HashMap<S, HashMap<E, T>>;
-pub type Histograms<S, E> = HashMap<S, HashMap<E, SyncHistogram<u64>>>;
 
+/// Translate attributes from a tracing span into a metrics span group.
+///
+/// All spans whose attributes produce the same `Id`-typed value when passed through `group`
+/// share a namespace for the groups produced by [`EventGroup::group`] on their contained events.
 pub trait SpanGroup {
+    /// The type of the metrics span group.
     type Id;
-    fn group(&self, a: &span::Attributes) -> Self::Id;
+
+    /// Extract the group for this span's attributes.
+    fn group(&self, span: &span::Attributes) -> Self::Id;
 }
 
+/// Translate attributes from a tracing event into a metrics event group.
+///
+/// All events that share a [`SpanGroup`], and whose attributes produce the same `Id`-typed value
+/// when passed through `group`, are considered a single metrics target, and have their samples
+/// recorded together.
 pub trait EventGroup {
+    /// The type of the metrics event group.
     type Id;
-    fn group(&self, e: &Event) -> Self::Id;
+
+    /// Extract the group for this event.
+    fn group(&self, event: &Event) -> Self::Id;
 }
 
 struct SamplerInner<S, E> {
-    /// We need fast access to the last event for each span.
+    // We need fast access to the last event for each span.
     last_event: Slab<atomic::AtomicU64>,
 
     // how many references are there to each span id?
@@ -47,6 +170,7 @@ struct SamplerInner<S, E> {
     // (S + callsite) => E => TID => Recorder
     recorders: Map<S, E, ThreadLocalRecorder>,
 
+    // used to produce a Recorder for a thread that has not recorded for a given sid/eid pair
     idle_recorders: Map<S, E, hdrhistogram::sync::IdleRecorder<Recorder<u64>, u64>>,
 }
 
@@ -67,7 +191,7 @@ where
 
 struct MasterHistograms<NH, S, E> {
     new_histogram: NH,
-    histograms: Histograms<S, E>,
+    histograms: HashMap<S, HashMap<E, SyncHistogram<u64>>>,
 }
 
 impl<NH, S, E> From<NH> for MasterHistograms<NH, S, E>
@@ -100,10 +224,14 @@ where
     }
 }
 
-/// For each event, we record the time between it and the preceeding event in the same span.
-/// We record that time difference in a histogram keyed by the callsite of the event's span **and**
-/// the span's _group_ as dictated by `Group`.
-pub struct Sampler<NH, S = group::ByName, E = group::ByTarget>
+/// Metrics-gathering tracing subscriber.
+///
+/// This type is constructed using a [`Builder`].
+///
+/// See the [crate-level docs] for details.
+///
+///   [crate-level docs]: ../
+pub struct Sampler<NH, S = group::ByName, E = group::ByMessage>
 where
     S: SpanGroup,
     E: EventGroup,
@@ -214,9 +342,19 @@ where
         }
     }
 
+    /// Access the metrics histograms.
+    ///
+    /// Be aware that the contained histograms are not automatically updated to reflect recently
+    /// gathered samples. For each histogram you wish to read from, you must call `refresh` or
+    /// `refresh_timeout` to gather up-to-date samples.
+    ///
+    /// For information about what you can do with the histograms, see the [`hdrhistogram`
+    /// documentation].
+    ///
+    ///   [`hdrhistogram` documentation]: https://docs.rs/hdrhistogram/
     pub fn with_histograms<F, R>(&self, f: F) -> R
     where
-        F: FnOnce(&mut Histograms<S::Id, E::Id>) -> R,
+        F: FnOnce(&mut HashMap<S::Id, HashMap<E::Id, SyncHistogram<u64>>>) -> R,
     {
         // NOTE; we have to be careful about deadlocks here. if the user's f calls
         // SyncHistogram::refresh(), it is going to wait for every _current_ Recorder to submit at
@@ -321,16 +459,6 @@ where
     }
 }
 
-impl<NH, S, E> Drop for Sampler<NH, S, E>
-where
-    S: SpanGroup,
-    E: EventGroup,
-    S::Id: Hash + Eq,
-    E::Id: Hash + Eq,
-{
-    fn drop(&mut self) {}
-}
-
 #[derive(Default)]
 struct ThreadLocalRecorder(HashMap<ThreadId, UnsafeCell<Recorder<u64>>>);
 
@@ -384,8 +512,10 @@ mod test {
     use tokio_trace::*;
 
     #[test]
-    fn it_works() {
-        let s = Builder::from(|| Histogram::new_with_max(200_000_000, 1).unwrap()).build();
+    fn by_target() {
+        let s = Builder::from(|| Histogram::new_with_max(200_000_000, 1).unwrap())
+            .events(group::ByTarget)
+            .build();
         let mut _type_of_s = if false { Some(&s) } else { None };
         let d = Dispatch::new(s);
         let d2 = d.clone();
@@ -414,9 +544,7 @@ mod test {
 
     #[test]
     fn by_message() {
-        let s = Builder::from(|| Histogram::new_with_max(200_000_000, 1).unwrap())
-            .events(group::ByMessage)
-            .build();
+        let s = Builder::from(|| Histogram::new_with_max(200_000_000, 1).unwrap()).build();
         let mut _type_of_s = if false { Some(&s) } else { None };
         let d = Dispatch::new(s);
         let d2 = d.clone();
@@ -448,6 +576,73 @@ mod test {
             // ~= 100ms
             assert!(h.value_at_quantile(0.5) > 50_000_000);
             assert!(h.value_at_quantile(0.5) < 150_000_000);
+        })
+    }
+
+    #[test]
+    fn pretty() {
+        let s = Builder::from(|| Histogram::new_with_max(1_000_000, 2).unwrap()).build();
+        let mut _type_of_s = if false { Some(&s) } else { None };
+        let d = Dispatch::new(s);
+        let d2 = d.clone();
+        std::thread::spawn(move || {
+            use rand::prelude::*;
+            let mut rng = thread_rng();
+            let fast = rand::distributions::Normal::new(100_000.0, 50_000.0);
+            let slow = rand::distributions::Normal::new(500_000.0, 20_000.0);
+            dispatcher::with_default(&d2, || loop {
+                let fast = std::time::Duration::from_nanos(fast.sample(&mut rng).max(0.0) as u64);
+                let slow = std::time::Duration::from_nanos(slow.sample(&mut rng).max(0.0) as u64);
+                trace_span!("request").in_scope(|| {
+                    std::thread::sleep(fast);
+                    trace!("fast");
+                    std::thread::sleep(slow);
+                    trace!("slow");
+                })
+            })
+        });
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        _type_of_s = d.downcast_ref();
+        _type_of_s.unwrap().with_histograms(|hs| {
+            assert_eq!(hs.len(), 1);
+            let hs = &mut hs.get_mut("request").unwrap();
+            assert_eq!(hs.len(), 2);
+
+            hs.get_mut("fast").unwrap().refresh();
+            hs.get_mut("slow").unwrap().refresh();
+
+            println!("fast:");
+            let h = &hs["fast"];
+            for v in h
+                .iter_linear(50_000)
+                .take_while(|v| v.value_iterated_to() < 500_000)
+            {
+                println!(
+                    "{:4}µs | {}",
+                    (v.value_iterated_to() + 1) / 1_000,
+                    "*".repeat(
+                        (v.count_since_last_iteration() as f64 * 40.0 / h.len() as f64).round()
+                            as usize
+                    )
+                );
+            }
+
+            println!("slow:");
+            let h = &hs["slow"];
+            for v in h
+                .iter_linear(50_000)
+                .skip_while(|v| v.value_iterated_to() < 500_000)
+                .take_while(|v| v.value_iterated_to() < 900_000)
+            {
+                println!(
+                    "{:4}µs | {}",
+                    (v.value_iterated_to() + 1) / 1_000,
+                    "*".repeat(
+                        (v.count_since_last_iteration() as f64 * 40.0 / h.len() as f64).round()
+                            as usize
+                    )
+                );
+            }
         })
     }
 }
