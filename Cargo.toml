@@ -11,3 +11,6 @@ slab = "0.4"
 quanta = "0.3"
 fnv = "1"
 crossbeam = "0.7"
+
+[dev-dependencies]
+tokio-trace = { git = "https://github.com/tokio-rs/tokio.git" }
