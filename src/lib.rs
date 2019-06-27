@@ -97,6 +97,14 @@
 //! [`Builder::events`] respectively. There are also a number of pre-defined "groupers" in the
 //! [`group`] module that cover the most common cases.
 //!
+//! # Timing information over time
+//!
+//! Every time you refresh a histogram, it incorporates any new timing samples recorded since the
+//! last call to `refresh`, allowing you to see timing metrics across all time. If you are
+//! monitoring the health of a continuously running system, you may instead wish to only see
+//! metrics across a limited window of time. You can do this by clearing the histogram in
+//! [`TimingSubscriber::with_histograms`] before refreshing them, or periodically as you see fit.
+//!
 //!   [high dynamic range histograms]: https://hdrhistogram.github.io/HdrHistogram/
 //!   [`hdrhistogram`]: https://docs.rs/hdrhistogram/
 //!   [`quanta`]: https://docs.rs/quanta/
