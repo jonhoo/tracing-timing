@@ -76,12 +76,26 @@ impl<NH, S, E> Builder<NH, S, E> {
         E::Id: Hash + Eq,
         NH: FnMut() -> Histogram<u64>,
     {
+        let (tx, rx) = crossbeam::channel::unbounded();
         TimingSubscriber {
             span_group: self.span_group,
             event_group: self.event_group,
             time: self.time,
-            histograms: super::MasterHistograms::from(self.new_histogram).into(),
-            shared: Default::default(),
+            reader: super::ReaderState {
+                created: rx,
+                histograms: Default::default(),
+            }
+            .into(),
+            writers: super::WriterState {
+                last_event: Default::default(),
+                refcount: Default::default(),
+                spans: Default::default(),
+                recorders: Default::default(),
+                idle_recorders: Default::default(),
+                new_histogram: self.new_histogram,
+                created: tx,
+            }
+            .into(),
         }
     }
 }

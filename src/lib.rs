@@ -113,6 +113,7 @@
 
 #![deny(missing_docs)]
 
+use crossbeam::channel;
 use crossbeam::sync::ShardedLock;
 use fnv::FnvHashMap as HashMap;
 use hdrhistogram::{sync::Recorder, SyncHistogram};
@@ -164,7 +165,7 @@ pub trait EventGroup {
     fn group(&self, event: &Event) -> Self::Id;
 }
 
-struct Inner<S, E> {
+struct WriterState<NH, S, E> {
     // We need fast access to the last event for each span.
     last_event: Slab<atomic::AtomicU64>,
 
@@ -180,56 +181,44 @@ struct Inner<S, E> {
 
     // used to produce a Recorder for a thread that has not recorded for a given sid/eid pair
     idle_recorders: Map<S, E, hdrhistogram::sync::IdleRecorder<Recorder<u64>, u64>>,
-}
 
-impl<S, E> Default for Inner<S, E>
-where
-    S: Eq + Hash,
-{
-    fn default() -> Self {
-        Inner {
-            last_event: Default::default(),
-            refcount: Default::default(),
-            spans: Default::default(),
-            recorders: Default::default(),
-            idle_recorders: Default::default(),
-        }
-    }
-}
+    // used to communicate new histograms to the reader
+    created: channel::Sender<(S, E, SyncHistogram<u64>)>,
 
-struct MasterHistograms<NH, S, E> {
+    // used to produce a new Histogram when a new sid/eid pair is encountered
+    //
+    // TODO:
+    // placing this in a ShardedLock requires that it is Sync, but it's only ever used when you're
+    // holding the write lock. not sure how to describe this in the type system.
     new_histogram: NH,
-    histograms: HashMap<S, HashMap<E, SyncHistogram<u64>>>,
 }
 
-impl<NH, S, E> From<NH> for MasterHistograms<NH, S, E>
-where
-    S: Hash + Eq,
-    E: Hash + Eq,
-{
-    fn from(nh: NH) -> Self {
-        MasterHistograms {
-            new_histogram: nh,
-            histograms: Default::default(),
-        }
-    }
-}
-
-impl<NH, S, E> MasterHistograms<NH, S, E>
+impl<NH, S, E> WriterState<NH, S, E>
 where
     NH: FnMut() -> Histogram<u64>,
-    S: Hash + Eq,
-    E: Hash + Eq,
+    S: Clone + Hash + Eq,
+    E: Clone + Hash + Eq,
 {
-    fn make(&mut self, span_group: S, event_group: E) -> Recorder<u64> {
+    fn recorder_for(&mut self, span_group: S, event_group: E) -> Recorder<u64> {
         let nh = &mut self.new_histogram;
-        self.histograms
-            .entry(span_group)
+        let created = &mut self.created;
+        self.idle_recorders
+            .entry(span_group.clone())
             .or_insert_with(HashMap::default)
-            .entry(event_group)
-            .or_insert_with(move || (nh)().into_sync())
+            .entry(event_group.clone())
+            .or_insert_with(move || {
+                let h = (nh)().into_sync();
+                let ir = h.recorder().into_idle();
+                created.send((span_group, event_group, h)).expect("as long as there are WriterState around, there is also ReaderState, which holds the receiver");
+                ir
+            })
             .recorder()
     }
+}
+
+struct ReaderState<S, E> {
+    created: channel::Receiver<(S, E, SyncHistogram<u64>)>,
+    histograms: HashMap<S, HashMap<E, SyncHistogram<u64>>>,
 }
 
 /// Timing-gathering tracing subscriber.
@@ -250,8 +239,8 @@ where
     event_group: E,
     time: quanta::Clock,
 
-    shared: ShardedLock<Inner<S::Id, E::Id>>,
-    histograms: Mutex<MasterHistograms<NH, S::Id, E::Id>>,
+    writers: ShardedLock<WriterState<NH, S::Id, E::Id>>,
+    reader: Mutex<ReaderState<S::Id, E::Id>>,
 }
 
 impl<NH, S, E> TimingSubscriber<NH, S, E>
@@ -264,7 +253,8 @@ where
 {
     fn time_event(&self, span: &span::Id) -> Option<u64> {
         let now = self.time.now();
-        let previous = self.shared.read().unwrap().last_event[span.into_u64() as usize - 1]
+        // TODO: avoid taking the read lock twice (once here, once in with_recorder)
+        let previous = self.writers.read().unwrap().last_event[span.into_u64() as usize - 1]
             .swap(now, atomic::Ordering::AcqRel);
         if previous > now {
             // someone else recorded a sample _just_ now
@@ -284,7 +274,7 @@ where
 
         // fast path: sid/eid pair is known to this thread
         let eid = self.event_group.group(event);
-        let inner = self.shared.read().unwrap();
+        let inner = self.writers.read().unwrap();
         let tmp = &inner.recorders[&inner.spans[span]];
         if let Some(ref recorder) = tmp.get(&eid).and_then(|recorders| recorders.get(&tid)) {
             // we know no-one else has our TID
@@ -310,26 +300,17 @@ where
         drop(tmp);
         drop(inner);
 
+        // now time to cache the recorder for next time
+        let mut inner = self.writers.write().unwrap();
+        let inner = &mut *inner;
+
         // we're going to need a recorder one way or another
         let mut recorder = recorder.unwrap_or_else(|sgi| {
             // there wasn't a recorder available for the sid/eid pair, so we need to make a new
             // histogram for that pair and gets its recorder.
-            //
-            // note that we take care to take this lock while not holding any other locks!
-            //
-            // note also that we _may_ end up with multiple subscribers all deciding to take this
-            // lock if a new event group appears in multiple places at once. that will slow things
-            // down a little, but should not deadlock.
-            //
-            // the biggest concern with taking the lock here is deadlocking with `with_histogram`
-            // if the user decides to call `.refresh()` in there...
-            self.histograms.lock().unwrap().make(sgi, eid.clone())
+            inner.recorder_for(sgi, eid.clone())
         });
         f(&mut recorder);
-
-        // now time to cache the recorder for next time
-        let mut inner = self.shared.write().unwrap();
-        let inner = &mut *inner;
 
         let e = inner
             .recorders
@@ -364,12 +345,20 @@ where
     where
         F: FnOnce(&mut HashMap<S::Id, HashMap<E::Id, SyncHistogram<u64>>>) -> R,
     {
-        // NOTE; we have to be careful about deadlocks here. if the user's f calls
-        // SyncHistogram::refresh(), it is going to wait for every _current_ Recorder to submit at
-        // least one more sample, so we need to make sure we're not preventing that! this lock is
-        // not taken by any other part of the subscriber, so we _should_ be all good.
-        let mut master = self.histograms.lock().unwrap();
-        f(&mut master.histograms)
+        // writers never take this lock, so we don't hold them up should the user call refresh(),
+        let mut reader = self.reader.lock().unwrap();
+        while let Ok((sid, eid, h)) = reader.created.try_recv() {
+            let h = reader
+                .histograms
+                .entry(sid)
+                .or_insert_with(HashMap::default)
+                .insert(eid, h);
+            assert!(
+                h.is_none(),
+                "second histogram created for same sid/eid combination"
+            );
+        }
+        f(&mut reader.histograms)
     }
 }
 
@@ -386,7 +375,7 @@ where
     }
 
     fn new_span(&self, span: &span::Attributes) -> span::Id {
-        let mut inner = self.shared.write().unwrap();
+        let mut inner = self.writers.write().unwrap();
         let id = inner
             .last_event
             .insert(atomic::AtomicU64::new(self.time.now()));
@@ -447,18 +436,18 @@ where
     }
 
     fn clone_span(&self, span: &span::Id) -> span::Id {
-        let inner = self.shared.read().unwrap();
+        let inner = self.writers.read().unwrap();
         inner.refcount[span.into_u64() as usize - 1].fetch_add(1, atomic::Ordering::AcqRel);
         span.clone()
     }
 
     fn drop_span(&self, span: span::Id) {
-        if 0 == self.shared.read().unwrap().refcount[span.into_u64() as usize - 1]
+        if 0 == self.writers.read().unwrap().refcount[span.into_u64() as usize - 1]
             .fetch_sub(1, atomic::Ordering::AcqRel)
         {
             // span has ended!
             // reclaim its id
-            let mut inner = self.shared.write().unwrap();
+            let mut inner = self.writers.write().unwrap();
             inner.last_event.remove(span.into_u64() as usize - 1);
             inner.refcount.remove(span.into_u64() as usize - 1);
             inner.spans.remove(&span);
