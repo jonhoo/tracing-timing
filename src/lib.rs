@@ -251,30 +251,27 @@ where
     E::Id: Clone + Hash + Eq,
     NH: FnMut() -> Histogram<u64> + Send,
 {
-    fn time_event(&self, span: &span::Id) -> Option<u64> {
+    fn time(&self, span: &span::Id, event: &Event) {
         let now = self.time.now();
-        // TODO: avoid taking the read lock twice (once here, once in with_recorder)
-        let previous = self.writers.read().unwrap().last_event[span.into_u64() as usize - 1]
-            .swap(now, atomic::Ordering::AcqRel);
+        let inner = self.writers.read().unwrap();
+        let previous =
+            inner.last_event[span.into_u64() as usize - 1].swap(now, atomic::Ordering::AcqRel);
         if previous > now {
             // someone else recorded a sample _just_ now
             // the delta is effectively zero, but recording a 0 sample is misleading
-            None
-        } else {
-            Some(now - previous)
+            return;
         }
-    }
 
-    fn with_recorder<F>(&self, span: &span::Id, event: &Event, f: F)
-    where
-        F: FnOnce(&mut Recorder<u64>),
-    {
+        let time = now - previous;
+
+        // time to record a sample!
+        let f = move |r: &mut Recorder<u64>| r.saturating_record(time);
+
         // who are we?
         let tid = ThreadId::default();
 
         // fast path: sid/eid pair is known to this thread
         let eid = self.event_group.group(event);
-        let inner = self.writers.read().unwrap();
         let tmp = &inner.recorders[&inner.spans[span]];
         if let Some(ref recorder) = tmp.get(&eid).and_then(|recorders| recorders.get(&tid)) {
             // we know no-one else has our TID
@@ -403,11 +400,7 @@ where
         SPAN.with(|current_span| {
             let current_span = current_span.borrow();
             if let Some(ref span) = *current_span {
-                if let Some(time) = self.time_event(span) {
-                    self.with_recorder(span, event, |r| {
-                        r.saturating_record(time);
-                    });
-                }
+                self.time(span, event);
             } else {
                 // recorded free-standing event -- ignoring
             }
