@@ -115,7 +115,6 @@
 
 use crossbeam::channel;
 use crossbeam::sync::ShardedLock;
-use fnv::FnvHashMap as HashMap;
 use hdrhistogram::{sync::Recorder, SyncHistogram};
 use slab::Slab;
 use std::cell::{RefCell, UnsafeCell};
@@ -124,6 +123,8 @@ use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 use std::sync::{atomic, Mutex};
 use tracing_core::*;
+
+type HashMap<K, V> = std::collections::HashMap<K, V, fxhash::FxBuildHasher>;
 
 thread_local! {
     static SPAN: RefCell<Option<span::Id>> = RefCell::new(None);
@@ -441,7 +442,7 @@ where
     }
 }
 
-#[derive(Hash, Eq, PartialEq)]
+#[derive(Hash, Eq, PartialEq, Ord, PartialOrd)]
 #[repr(transparent)]
 struct ThreadId {
     tid: usize,

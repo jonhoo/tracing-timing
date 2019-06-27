@@ -6,10 +6,10 @@ edition = "2018"
 
 [dependencies]
 tracing-core = { git = "https://github.com/tokio-rs/tracing.git" }
-hdrhistogram = "6.3.2"
+hdrhistogram = "6.3.3"
 slab = "0.4"
 quanta = "0.3"
-fnv = "1"
+fxhash = "0.2"
 crossbeam = "0.7"
 
 [dev-dependencies]
