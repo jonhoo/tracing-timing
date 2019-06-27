@@ -14,16 +14,16 @@ use tracing_core::*;
 pub struct ByTarget;
 
 impl SpanGroup for ByTarget {
-    type Id = String;
+    type Id = &'static str;
     fn group(&self, a: &span::Attributes) -> Self::Id {
-        a.metadata().target().to_string()
+        a.metadata().target()
     }
 }
 
 impl EventGroup for ByTarget {
-    type Id = String;
+    type Id = &'static str;
     fn group(&self, e: &Event) -> Self::Id {
-        e.metadata().target().to_string()
+        e.metadata().target()
     }
 }
 
@@ -42,9 +42,9 @@ impl SpanGroup for ByName {
 }
 
 impl EventGroup for ByName {
-    type Id = String;
+    type Id = &'static str;
     fn group(&self, e: &Event) -> Self::Id {
-        e.metadata().name().to_string()
+        e.metadata().name()
     }
 }
 
