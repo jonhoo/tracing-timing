@@ -440,13 +440,13 @@ where
 
     fn clone_span(&self, span: &span::Id) -> span::Id {
         let inner = self.shared.read().unwrap();
-        inner.refcount[span.into_u64() as usize - 1].fetch_add(1, atomic::Ordering::SeqCst);
+        inner.refcount[span.into_u64() as usize - 1].fetch_add(1, atomic::Ordering::AcqRel);
         span.clone()
     }
 
     fn drop_span(&self, span: span::Id) {
         if 0 == self.shared.read().unwrap().refcount[span.into_u64() as usize - 1]
-            .fetch_sub(1, atomic::Ordering::SeqCst)
+            .fetch_sub(1, atomic::Ordering::AcqRel)
         {
             // span has ended!
             // reclaim its id
