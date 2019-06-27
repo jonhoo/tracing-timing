@@ -45,8 +45,8 @@
 //!  900µs |
 //! ```
 //!
-//! When [`Sampler`] is used as the `tracing::Dispatch`, the time between each event in a span is
-//! measured using [`quanta`], and is recorded in "[high dynamic range histograms]" using
+//! When [`TimingSubscriber`] is used as the `tracing::Dispatch`, the time between each event in a
+//! span is measured using [`quanta`], and is recorded in "[high dynamic range histograms]" using
 //! [`hdrhistogram`]'s multi-threaded recording facilities. The recorded timing information is
 //! grouped using the [`SpanGroup`] and [`EventGroup`] traits, allowing you to combine recorded
 //! statistics across spans and events.
@@ -54,9 +54,9 @@
 //! ## Extracting timing histograms
 //!
 //! The crate does not implement a mechanism for recording the resulting histograms. Instead, you
-//! can implement this as you see fit using [`Sampler::with_histograms`]. It gives you access to
-//! the histograms for all groups. Note that you must call `refresh()` on each histogram to see its
-//! latest values (see [`hdrhistogram::SyncHistogram`]).
+//! can implement this as you see fit using [`TimingSubscriber::with_histograms`]. It gives you
+//! access to the histograms for all groups. Note that you must call `refresh()` on each histogram
+//! to see its latest values (see [`hdrhistogram::SyncHistogram`]).
 //!
 //! To access the histograms, you (currently) need to use `tracing::Dispatch::downcast_ref`.
 //! The mystical black magic invocations you need to issue are as follows:
@@ -90,12 +90,12 @@
 //!
 //! ## Grouping samples
 //!
-//! By default, [`Sampler`] groups samples by the "name" of the containing span and the "message"
-//! of the relevant event. These are the first string parameter you pass to each of the relevant
-//! tracing macros. You can override this behavior either by providing your own implementation of
-//! [`SpanGroup`] and [`EventGroup`] to [`Builder::spans`] and [`Builder::events`] respectively.
-//! There are also a number of pre-defined "groupers" in the [`group`] module that cover the most
-//! common cases.
+//! By default, [`TimingSubscriber`] groups samples by the "name" of the containing span and the
+//! "message" of the relevant event. These are the first string parameter you pass to each of the
+//! relevant tracing macros. You can override this behavior either by providing your own
+//! implementation of [`SpanGroup`] and [`EventGroup`] to [`Builder::spans`] and
+//! [`Builder::events`] respectively. There are also a number of pre-defined "groupers" in the
+//! [`group`] module that cover the most common cases.
 //!
 //!   [high dynamic range histograms]: https://hdrhistogram.github.io/HdrHistogram/
 //!   [`hdrhistogram`]: https://docs.rs/hdrhistogram/
@@ -156,7 +156,7 @@ pub trait EventGroup {
     fn group(&self, event: &Event) -> Self::Id;
 }
 
-struct SamplerInner<S, E> {
+struct Inner<S, E> {
     // We need fast access to the last event for each span.
     last_event: Slab<atomic::AtomicU64>,
 
@@ -174,12 +174,12 @@ struct SamplerInner<S, E> {
     idle_recorders: Map<S, E, hdrhistogram::sync::IdleRecorder<Recorder<u64>, u64>>,
 }
 
-impl<S, E> Default for SamplerInner<S, E>
+impl<S, E> Default for Inner<S, E>
 where
     S: Eq + Hash,
 {
     fn default() -> Self {
-        SamplerInner {
+        Inner {
             last_event: Default::default(),
             refcount: Default::default(),
             spans: Default::default(),
@@ -231,7 +231,7 @@ where
 /// See the [crate-level docs] for details.
 ///
 ///   [crate-level docs]: ../
-pub struct Sampler<NH, S = group::ByName, E = group::ByMessage>
+pub struct TimingSubscriber<NH, S = group::ByName, E = group::ByMessage>
 where
     S: SpanGroup,
     E: EventGroup,
@@ -242,11 +242,11 @@ where
     event_group: E,
     time: quanta::Clock,
 
-    shared: ShardedLock<SamplerInner<S::Id, E::Id>>,
+    shared: ShardedLock<Inner<S::Id, E::Id>>,
     histograms: Mutex<MasterHistograms<NH, S::Id, E::Id>>,
 }
 
-impl<NH, S, E> Sampler<NH, S, E>
+impl<NH, S, E> TimingSubscriber<NH, S, E>
 where
     S: SpanGroup,
     E: EventGroup,
@@ -365,7 +365,7 @@ where
     }
 }
 
-impl<NH, S, E> Subscriber for Sampler<NH, S, E>
+impl<NH, S, E> Subscriber for TimingSubscriber<NH, S, E>
 where
     S: SpanGroup + 'static,
     E: EventGroup + 'static,

@@ -1,10 +1,10 @@
-use crate::{group, EventGroup, Histogram, Sampler, SpanGroup};
+use crate::{group, EventGroup, Histogram, SpanGroup, TimingSubscriber};
 use std::hash::Hash;
 
-/// Builder for [`Sampler`] instances.
+/// Builder for [`TimingSubscriber`] instances.
 ///
 /// This type implements the [builder pattern]. It lets you easily configure and construct a new
-/// [`Sampler`] subscriber. See the individual methods for details. To start, use
+/// [`TimingSubscriber`] subscriber. See the individual methods for details. To start, use
 /// [`Builder::from`]:
 ///
 /// ```rust
@@ -67,8 +67,8 @@ impl<NH, S, E> Builder<NH, S, E> {
         self
     }
 
-    /// Construct a [`Sampler`] as configured.
-    pub fn build(self) -> Sampler<NH, S, E>
+    /// Construct a [`TimingSubscriber`] as configured.
+    pub fn build(self) -> TimingSubscriber<NH, S, E>
     where
         S: SpanGroup,
         E: EventGroup,
@@ -76,7 +76,7 @@ impl<NH, S, E> Builder<NH, S, E> {
         E::Id: Hash + Eq,
         NH: FnMut() -> Histogram<u64>,
     {
-        Sampler {
+        TimingSubscriber {
             span_group: self.span_group,
             event_group: self.event_group,
             time: self.time,
