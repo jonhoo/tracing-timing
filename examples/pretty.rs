@@ -6,20 +6,29 @@ fn main() {
     let mut _type_of_s = if false { Some(&s) } else { None };
     let d = Dispatch::new(s);
     let d2 = d.clone();
+    let mut trace = Histogram::<u64>::new_with_bounds(1_000, 16_000, 3)
+        .unwrap()
+        .into_sync();
+    let mut r_trace = trace.recorder();
     std::thread::spawn(move || {
         use rand::prelude::*;
         let mut rng = thread_rng();
         let fast = rand::distributions::Normal::new(100_000.0, 50_000.0);
         let slow = rand::distributions::Normal::new(500_000.0, 50_000.0);
+        let clock = quanta::Clock::new();
         dispatcher::with_default(&d2, || loop {
             let fast = std::time::Duration::from_nanos(fast.sample(&mut rng).max(0.0) as u64);
             let slow = std::time::Duration::from_nanos(slow.sample(&mut rng).max(0.0) as u64);
             trace_span!("request").in_scope(|| {
                 std::thread::sleep(fast);
+                let a = clock.now();
                 trace!("fast");
+                r_trace.saturating_record(clock.now() - a);
                 std::thread::sleep(slow);
+                let a = clock.now();
                 trace!("slow");
-            })
+                r_trace.saturating_record(clock.now() - a);
+            });
         })
     });
     std::thread::sleep(std::time::Duration::from_secs(10));
@@ -48,7 +57,7 @@ fn main() {
             );
         }
 
-        println!("slow:");
+        println!("\nslow:");
         let h = &hs["slow"];
         for v in h
             .iter_linear(50_000)
@@ -65,4 +74,20 @@ fn main() {
             );
         }
     });
+
+    trace.refresh();
+    println!("\ntrace!:");
+    for v in trace
+        .iter_linear(1_000)
+        .take_while(|v| v.value_iterated_to() < 16_000)
+    {
+        println!(
+            "{:4}µs | {}",
+            (v.value_iterated_to() + 1) / 1_000,
+            "*".repeat(
+                (v.count_since_last_iteration() as f64 * 40.0 / trace.len() as f64).round()
+                    as usize
+            )
+        );
+    }
 }
