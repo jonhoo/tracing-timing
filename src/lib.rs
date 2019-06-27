@@ -164,6 +164,10 @@ pub trait EventGroup {
     fn group(&self, event: &Event) -> Self::Id;
 }
 
+fn span_id_to_slab_idx(span: &span::Id) -> usize {
+    span.into_u64() as usize - 1
+}
+
 struct WriterState<NH, S, E> {
     // We need fast access to the last event for each span.
     last_event: Slab<atomic::AtomicU64>,
@@ -173,7 +177,7 @@ struct WriterState<NH, S, E> {
     refcount: Slab<atomic::AtomicUsize>,
 
     // note that many span::Ids can map to the same S
-    spans: HashMap<span::Id, S>,
+    spans: Slab<S>,
 
     // TID => (S + callsite) => E => thread-local Recorder
     tls: ThreadLocal<Map<S, E, Recorder<u64>>>,
@@ -231,7 +235,7 @@ where
         let now = self.time.now();
         let inner = self.writers.read().unwrap();
         let previous =
-            inner.last_event[span.into_u64() as usize - 1].swap(now, atomic::Ordering::AcqRel);
+            inner.last_event[span_id_to_slab_idx(span)].swap(now, atomic::Ordering::AcqRel);
         if previous > now {
             // someone else recorded a sample _just_ now
             // the delta is effectively zero, but recording a 0 sample is misleading
@@ -249,7 +253,7 @@ where
         // fast path: sid/eid pair is known to this thread
         let eid = self.event_group.group(event);
         if let Some(ref tls) = inner.tls.get(&tid) {
-            let sid = &inner.spans[span];
+            let sid = &inner.spans[span_id_to_slab_idx(span)];
 
             // we know no-one else has our TID:
             let tls = unsafe { &mut *tls.get() };
@@ -259,7 +263,7 @@ where
                 // sid/eid already known and we already have a thread-local recorder!
                 f(recorder);
                 return;
-            } else if let Some(ref ir) = inner.idle_recorders[sid].get(&eid) {
+            } else if let Some(ref ir) = inner.idle_recorders[&sid].get(&eid) {
                 // we didn't know about the eid, but if there's already a recorder for it,
                 // we can just create a local recorder from it and move on
                 let mut recorder = ir.recorder();
@@ -290,12 +294,12 @@ where
         let tls = unsafe { &mut *tls.get() };
 
         // use an existing recorder if one exists, or make a new histogram if one does not
-        let sid = &inner.spans[span];
+        let sid = &inner.spans[span_id_to_slab_idx(span)];
         let nh = &mut inner.new_histogram;
         let created = &mut inner.created;
         let ir = inner
             .idle_recorders
-            .get_mut(&inner.spans[span])
+            .get_mut(&inner.spans[span_id_to_slab_idx(span)])
             .unwrap()
             .entry(eid.clone())
             .or_insert_with(|| {
@@ -369,9 +373,10 @@ where
             .insert(atomic::AtomicU64::new(self.time.now()));
         let id2 = inner.refcount.insert(atomic::AtomicUsize::new(1));
         assert_eq!(id, id2);
-        let id = span::Id::from_u64(id as u64 + 1);
         let sg = self.span_group.group(span);
-        inner.spans.insert(id.clone(), sg.clone());
+        let id2 = inner.spans.insert(sg.clone());
+        assert_eq!(id, id2);
+        let id = span::Id::from_u64(id as u64 + 1);
         inner
             .idle_recorders
             .entry(sg)
@@ -417,20 +422,20 @@ where
 
     fn clone_span(&self, span: &span::Id) -> span::Id {
         let inner = self.writers.read().unwrap();
-        inner.refcount[span.into_u64() as usize - 1].fetch_add(1, atomic::Ordering::AcqRel);
+        inner.refcount[span_id_to_slab_idx(span)].fetch_add(1, atomic::Ordering::AcqRel);
         span.clone()
     }
 
     fn drop_span(&self, span: span::Id) {
-        if 0 == self.writers.read().unwrap().refcount[span.into_u64() as usize - 1]
+        if 0 == self.writers.read().unwrap().refcount[span_id_to_slab_idx(&span)]
             .fetch_sub(1, atomic::Ordering::AcqRel)
         {
             // span has ended!
             // reclaim its id
             let mut inner = self.writers.write().unwrap();
-            inner.last_event.remove(span.into_u64() as usize - 1);
-            inner.refcount.remove(span.into_u64() as usize - 1);
-            inner.spans.remove(&span);
+            inner.last_event.remove(span_id_to_slab_idx(&span));
+            inner.refcount.remove(span_id_to_slab_idx(&span));
+            inner.spans.remove(span_id_to_slab_idx(&span));
             // we _keep_ the entry in inner.recorders in place, since it may be used by other spans
         }
     }
