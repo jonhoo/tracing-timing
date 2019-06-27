@@ -119,7 +119,6 @@ use fnv::FnvHashMap as HashMap;
 use hdrhistogram::{sync::Recorder, SyncHistogram};
 use slab::Slab;
 use std::cell::{RefCell, UnsafeCell};
-use std::collections::hash_map::Entry;
 use std::hash::Hash;
 use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
@@ -176,8 +175,8 @@ struct WriterState<NH, S, E> {
     // note that many span::Ids can map to the same S
     spans: HashMap<span::Id, S>,
 
-    // (S + callsite) => E => TID => Recorder
-    recorders: Map<S, E, ThreadLocalRecorder>,
+    // TID => (S + callsite) => E => thread-local Recorder
+    tls: ThreadLocal<Map<S, E, Recorder<u64>>>,
 
     // used to produce a Recorder for a thread that has not recorded for a given sid/eid pair
     idle_recorders: Map<S, E, hdrhistogram::sync::IdleRecorder<Recorder<u64>, u64>>,
@@ -191,29 +190,6 @@ struct WriterState<NH, S, E> {
     // placing this in a ShardedLock requires that it is Sync, but it's only ever used when you're
     // holding the write lock. not sure how to describe this in the type system.
     new_histogram: NH,
-}
-
-impl<NH, S, E> WriterState<NH, S, E>
-where
-    NH: FnMut() -> Histogram<u64>,
-    S: Clone + Hash + Eq,
-    E: Clone + Hash + Eq,
-{
-    fn recorder_for(&mut self, span_group: S, event_group: E) -> Recorder<u64> {
-        let nh = &mut self.new_histogram;
-        let created = &mut self.created;
-        self.idle_recorders
-            .entry(span_group.clone())
-            .or_insert_with(HashMap::default)
-            .entry(event_group.clone())
-            .or_insert_with(move || {
-                let h = (nh)().into_sync();
-                let ir = h.recorder().into_idle();
-                created.send((span_group, event_group, h)).expect("as long as there are WriterState around, there is also ReaderState, which holds the receiver");
-                ir
-            })
-            .recorder()
-    }
 }
 
 struct ReaderState<S, E> {
@@ -272,60 +248,75 @@ where
 
         // fast path: sid/eid pair is known to this thread
         let eid = self.event_group.group(event);
-        let tmp = &inner.recorders[&inner.spans[span]];
-        if let Some(ref recorder) = tmp.get(&eid).and_then(|recorders| recorders.get(&tid)) {
-            // we know no-one else has our TID
-            f(unsafe { &mut *recorder.get() });
-            return;
+        if let Some(ref tls) = inner.tls.get(&tid) {
+            let sid = &inner.spans[span];
+
+            // we know no-one else has our TID:
+            let tls = unsafe { &mut *tls.get() };
+
+            // the span id _must_ be known, as it's added when created
+            if let Some(ref mut recorder) = tls.get_mut(&sid).and_then(|rs| rs.get_mut(&eid)) {
+                // sid/eid already known and we already have a thread-local recorder!
+                f(recorder);
+                return;
+            } else if let Some(ref ir) = inner.idle_recorders[sid].get(&eid) {
+                // we didn't know about the eid, but if there's already a recorder for it,
+                // we can just create a local recorder from it and move on
+                let mut recorder = ir.recorder();
+                f(&mut recorder);
+                let r = tls
+                    .entry(sid.clone())
+                    .or_insert_with(Default::default)
+                    .insert(eid, recorder);
+                assert!(r.is_none());
+                return;
+            } else {
+                // we're the first thread to see this pair, so we need to make a histogram for it
+            }
+        } else {
+            // this thread does not yet have TLS -- we'll have to take the lock
         }
 
-        // slow path: either sid/eid pair was new, or it was new _to this thread_
-        // in either case, we need to create entry for recorder where there was none
-
-        // to avoid taking unnecessary locks later, let's short-cut if there is already an idle
-        // recorder available for this sid/eid pair
-        let recorder = inner.idle_recorders[&inner.spans[span]]
-            .get(&eid)
-            .map(|ir| ir.recorder())
-            .ok_or_else(|| {
-                // if there wasn't one, we need the span group for later
-                inner.spans[span].clone()
-            });
-
-        // we're going to have to cache the recorder for next time
-        // to do that, we need to take the write lock, so we must first drop the read lock
-        drop(tmp);
+        // slow path: either this thread is new, or the sid/eid pair was new
+        // in either case, we need to take the write lock
+        // to do that, we must first drop the read lock
         drop(inner);
-
-        // now time to cache the recorder for next time
         let mut inner = self.writers.write().unwrap();
         let inner = &mut *inner;
 
-        // we're going to need a recorder one way or another
-        let mut recorder = recorder.unwrap_or_else(|sgi| {
-            // there wasn't a recorder available for the sid/eid pair, so we need to make a new
-            // histogram for that pair and gets its recorder.
-            inner.recorder_for(sgi, eid.clone())
-        });
-        f(&mut recorder);
+        // if we don't have any thread-local state, construct that first
+        let tls = inner.tls.entry(tid).or_insert_with(Default::default);
+        // no-one else has our TID _and_ we have exclusive access to inner
+        let tls = unsafe { &mut *tls.get() };
 
-        let e = inner
-            .recorders
+        // use an existing recorder if one exists, or make a new histogram if one does not
+        let sid = &inner.spans[span];
+        let nh = &mut inner.new_histogram;
+        let created = &mut inner.created;
+        let ir = inner
+            .idle_recorders
             .get_mut(&inner.spans[span])
             .unwrap()
-            .entry(eid)
-            .or_insert_with(ThreadLocalRecorder::default)
-            .entry(tid);
+            .entry(eid.clone())
+            .or_insert_with(|| {
+                let h = (nh)().into_sync();
+                let ir = h.recorder().into_idle();
+                created.send((sid.clone(), eid.clone(), h)).expect(
+                    "a WriterState implies there's also a ReaderState, which holds the receiver",
+                );
+                ir
+            });
 
-        if let Entry::Vacant(e) = e {
-            e.insert(UnsafeCell::new(recorder));
-        } else {
-            // this should not be possible.
-            // we entered the slow path because there was no entry for either our tid, or for the
-            // whole eid (which would also imply our tid). since we are the only thread with our
-            // tid, no-one else should have filled it for us.
-            unreachable!();
-        }
+        // finally, get us a thread-local recorder
+        let mut recorder = ir.recorder();
+        f(&mut recorder);
+
+        // and stash it away for next time
+        let r = tls
+            .entry(sid.clone())
+            .or_insert_with(Default::default)
+            .insert(eid, recorder);
+        assert!(r.is_none());
     }
 
     /// Access the timing histograms.
@@ -381,10 +372,6 @@ where
         let id = span::Id::from_u64(id as u64 + 1);
         let sg = self.span_group.group(span);
         inner.spans.insert(id.clone(), sg.clone());
-        inner
-            .recorders
-            .entry(sg.clone())
-            .or_insert_with(HashMap::default);
         inner
             .idle_recorders
             .entry(sg)
@@ -449,22 +436,6 @@ where
     }
 }
 
-#[derive(Default)]
-struct ThreadLocalRecorder(HashMap<ThreadId, UnsafeCell<Recorder<u64>>>);
-
-impl Deref for ThreadLocalRecorder {
-    type Target = HashMap<ThreadId, UnsafeCell<Recorder<u64>>>;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl DerefMut for ThreadLocalRecorder {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
 #[derive(Hash, Eq, PartialEq)]
 #[repr(transparent)]
 struct ThreadId {
@@ -493,8 +464,24 @@ impl Default for ThreadId {
     }
 }
 
-unsafe impl Send for ThreadLocalRecorder {}
-unsafe impl Sync for ThreadLocalRecorder {}
+#[derive(Default)]
+struct ThreadLocal<T>(HashMap<ThreadId, UnsafeCell<T>>);
+
+impl<T> Deref for ThreadLocal<T> {
+    type Target = HashMap<ThreadId, UnsafeCell<T>>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T> DerefMut for ThreadLocal<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+unsafe impl<T: Send> Send for ThreadLocal<T> {}
+unsafe impl<T: Sync> Sync for ThreadLocal<T> {}
 
 #[cfg(test)]
 mod test {

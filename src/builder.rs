@@ -90,7 +90,7 @@ impl<NH, S, E> Builder<NH, S, E> {
                 last_event: Default::default(),
                 refcount: Default::default(),
                 spans: Default::default(),
-                recorders: Default::default(),
+                tls: Default::default(),
                 idle_recorders: Default::default(),
                 new_histogram: self.new_histogram,
                 created: tx,
