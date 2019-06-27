@@ -8,7 +8,7 @@ use std::hash::Hash;
 /// [`Builder::from`]:
 ///
 /// ```rust
-/// use tracing_metrics::{Builder, Histogram};
+/// use tracing_timing::{Builder, Histogram};
 /// let builder = Builder::from(|| Histogram::new(3).unwrap());
 /// let subscriber = builder.build();
 /// ```

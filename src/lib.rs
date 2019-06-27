@@ -5,7 +5,7 @@
 //!
 //! ```rust
 //! use tracing::*;
-//! use tracing_metrics::{Builder, Histogram};
+//! use tracing_timing::{Builder, Histogram};
 //! let subscriber = Builder::from(|| Histogram::new_with_max(1_000_000, 2).unwrap()).build();
 //! let dispatcher = Dispatch::new(subscriber);
 //! dispatcher::with_default(&dispatcher, || {
@@ -47,11 +47,11 @@
 //!
 //! When [`Sampler`] is used as the `tracing::Dispatch`, the time between each event in a span is
 //! measured using [`quanta`], and is recorded in "[high dynamic range histograms]" using
-//! [`hdrhistogram`]'s multi-threaded recording facilities. The recorded metrics are grouped using
-//! the [`SpanGroup`] and [`EventGroup`] traits, allowing you to combine recorded statistics across
-//! spans and events.
+//! [`hdrhistogram`]'s multi-threaded recording facilities. The recorded timing information is
+//! grouped using the [`SpanGroup`] and [`EventGroup`] traits, allowing you to combine recorded
+//! statistics across spans and events.
 //!
-//! ## Extracting metrics
+//! ## Extracting timing histograms
 //!
 //! The crate does not implement a mechanism for recording the resulting histograms. Instead, you
 //! can implement this as you see fit using [`Sampler::with_histograms`]. It gives you access to
@@ -63,7 +63,7 @@
 //!
 //! ```rust
 //! use tracing::*;
-//! use tracing_metrics::{Builder, Histogram};
+//! use tracing_timing::{Builder, Histogram};
 //! let subscriber = Builder::from(|| Histogram::new_with_max(1_000_000, 2).unwrap()).build();
 //! // magic #1:
 //! let mut _type_of_subscriber = if false { Some(&subscriber) } else { None };
@@ -131,25 +131,25 @@ pub mod group;
 
 type Map<S, E, T> = HashMap<S, HashMap<E, T>>;
 
-/// Translate attributes from a tracing span into a metrics span group.
+/// Translate attributes from a tracing span into a timing span group.
 ///
 /// All spans whose attributes produce the same `Id`-typed value when passed through `group`
 /// share a namespace for the groups produced by [`EventGroup::group`] on their contained events.
 pub trait SpanGroup {
-    /// The type of the metrics span group.
+    /// The type of the timing span group.
     type Id;
 
     /// Extract the group for this span's attributes.
     fn group(&self, span: &span::Attributes) -> Self::Id;
 }
 
-/// Translate attributes from a tracing event into a metrics event group.
+/// Translate attributes from a tracing event into a timing event group.
 ///
 /// All events that share a [`SpanGroup`], and whose attributes produce the same `Id`-typed value
-/// when passed through `group`, are considered a single metrics target, and have their samples
+/// when passed through `group`, are considered a single timing target, and have their samples
 /// recorded together.
 pub trait EventGroup {
-    /// The type of the metrics event group.
+    /// The type of the timing event group.
     type Id;
 
     /// Extract the group for this event.
@@ -224,7 +224,7 @@ where
     }
 }
 
-/// Metrics-gathering tracing subscriber.
+/// Timing-gathering tracing subscriber.
 ///
 /// This type is constructed using a [`Builder`].
 ///
@@ -342,7 +342,7 @@ where
         }
     }
 
-    /// Access the metrics histograms.
+    /// Access the timing histograms.
     ///
     /// Be aware that the contained histograms are not automatically updated to reflect recently
     /// gathered samples. For each histogram you wish to read from, you must call `refresh` or
@@ -534,7 +534,7 @@ mod test {
             let hs = &mut hs.get_mut("foo").unwrap();
             assert_eq!(hs.len(), 1);
 
-            let h = &mut hs.get_mut("tracing_metrics::test").unwrap();
+            let h = &mut hs.get_mut("tracing_timing::test").unwrap();
             h.refresh();
             // ~= 100ms
             assert!(h.value_at_quantile(0.5) > 50_000_000);

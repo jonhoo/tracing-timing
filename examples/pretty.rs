@@ -1,5 +1,5 @@
 use tracing::*;
-use tracing_metrics::{Builder, Histogram};
+use tracing_timing::{Builder, Histogram};
 
 fn main() {
     let s = Builder::from(|| Histogram::new_with_max(1_000_000, 2).unwrap()).build();
