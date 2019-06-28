@@ -8,7 +8,7 @@ fn by_name() {
         .spans(group::ByName)
         .events(group::ByName)
         .build();
-    let mut _type_of_s = if false { Some(&s) } else { None };
+    let sid = s.downcaster();
     let d = Dispatch::new(s);
     let d2 = d.clone();
     std::thread::spawn(move || {
@@ -19,8 +19,7 @@ fn by_name() {
         })
     });
     std::thread::sleep(std::time::Duration::from_millis(10));
-    _type_of_s = d.downcast_ref();
-    _type_of_s.unwrap().with_histograms(|hs| {
+    sid.downcast(&d).unwrap().with_histograms(|hs| {
         assert_eq!(hs.len(), 1);
         let hs = &mut hs.get_mut("foo").unwrap();
         assert_eq!(hs.len(), 1);
@@ -34,7 +33,7 @@ fn by_target() {
         .spans(group::ByTarget)
         .events(group::ByTarget)
         .build();
-    let mut _type_of_s = if false { Some(&s) } else { None };
+    let sid = s.downcaster();
     let d = Dispatch::new(s);
     let d2 = d.clone();
     std::thread::spawn(move || {
@@ -45,8 +44,7 @@ fn by_target() {
         })
     });
     std::thread::sleep(std::time::Duration::from_millis(10));
-    _type_of_s = d.downcast_ref();
-    _type_of_s.unwrap().with_histograms(|hs| {
+    sid.downcast(&d).unwrap().with_histograms(|hs| {
         assert_eq!(hs.len(), 1);
         let hs = &mut hs.get_mut("lib").unwrap();
         assert_eq!(hs.len(), 1);
@@ -57,7 +55,7 @@ fn by_target() {
 #[test]
 fn by_default() {
     let s = Builder::from(|| Histogram::new_with_max(200_000_000, 1).unwrap()).build();
-    let mut _type_of_s = if false { Some(&s) } else { None };
+    let sid = s.downcaster();
     let d = Dispatch::new(s);
     let d2 = d.clone();
     std::thread::spawn(move || {
@@ -71,8 +69,7 @@ fn by_default() {
         })
     });
     std::thread::sleep(std::time::Duration::from_millis(500));
-    _type_of_s = d.downcast_ref();
-    _type_of_s.unwrap().with_histograms(|hs| {
+    sid.downcast(&d).unwrap().with_histograms(|hs| {
         assert_eq!(hs.len(), 1);
         let hs = &mut hs.get_mut("foo").unwrap();
         assert_eq!(hs.len(), 2);
@@ -97,7 +94,7 @@ fn by_field() {
         .spans(group::ByField::from("sf"))
         .events(group::ByField::from("ef"))
         .build();
-    let mut _type_of_s = if false { Some(&s) } else { None };
+    let sid = s.downcaster();
     let d = Dispatch::new(s);
     let d2 = d.clone();
     std::thread::spawn(move || {
@@ -109,8 +106,7 @@ fn by_field() {
         })
     });
     std::thread::sleep(std::time::Duration::from_millis(10));
-    _type_of_s = d.downcast_ref();
-    _type_of_s.unwrap().with_histograms(|hs| {
+    sid.downcast(&d).unwrap().with_histograms(|hs| {
         assert_eq!(hs.len(), 1);
         let hs = &mut hs.get_mut("span").unwrap();
         assert_eq!(hs.len(), 2);
@@ -124,7 +120,7 @@ fn by_field_typed() {
     let s = Builder::from(|| Histogram::new_with_max(200_000_000, 1).unwrap())
         .events(group::ByField::from("f"))
         .build();
-    let mut _type_of_s = if false { Some(&s) } else { None };
+    let sid = s.downcaster();
     let d = Dispatch::new(s);
     let d2 = d.clone();
     std::thread::spawn(move || {
@@ -137,8 +133,7 @@ fn by_field_typed() {
         })
     });
     std::thread::sleep(std::time::Duration::from_millis(10));
-    _type_of_s = d.downcast_ref();
-    _type_of_s.unwrap().with_histograms(|hs| {
+    sid.downcast(&d).unwrap().with_histograms(|hs| {
         assert_eq!(hs.len(), 1);
         let hs = &mut hs.get_mut("foo").unwrap();
         assert_eq!(hs.len(), 3);

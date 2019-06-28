@@ -6,7 +6,8 @@ fn main() {
     let s = Builder::from(|| Histogram::new_with_max(1_000_000, 2).unwrap())
         .events(tracing_timing::group::ByName)
         .build();
-    let mut _type_of_s = if false { Some(&s) } else { None };
+    let sid = s.downcaster();
+
     let d = Dispatch::new(s);
     let d2 = d.clone();
     let mut trace = Histogram::<u64>::new_with_bounds(100, 8_000, 3)
@@ -41,8 +42,7 @@ fn main() {
     // get trace info first, because refresh in with_histograms will slow down record in trace!
     trace.refresh();
 
-    _type_of_s = d.downcast_ref();
-    _type_of_s.unwrap().with_histograms(|hs| {
+    sid.downcast(&d).unwrap().with_histograms(|hs| {
         assert_eq!(hs.len(), 1);
         let hs = &mut hs.get_mut("request").unwrap();
         assert_eq!(hs.len(), 2);

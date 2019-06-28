@@ -57,22 +57,20 @@
 //! access to the histograms for all groups. Note that you must call `refresh()` on each histogram
 //! to see its latest values (see [`hdrhistogram::SyncHistogram`]).
 //!
-//! To access the histograms, you (currently) need to use `tracing::Dispatch::downcast_ref`.
-//! The mystical black magic invocations you need to issue are as follows:
+//! To access the histograms, you can use `tracing::Dispatch::downcast_ref`, _or_ you can get a
+//! [`Downcaster`]:
 //!
 //! ```rust
 //! use tracing::*;
 //! use tracing_timing::{Builder, Histogram};
 //! let subscriber = Builder::from(|| Histogram::new_with_max(1_000_000, 2).unwrap()).build();
-//! // magic #1:
-//! let mut _type_of_subscriber = if false { Some(&subscriber) } else { None };
+//! let downcaster = subscriber.downcaster();
 //! let dispatch = Dispatch::new(subscriber);
 //! // ...
 //! // code that hands off clones of the dispatch
 //! // maybe to other threads
 //! // ...
-//! _type_of_subscriber = dispatch.downcast_ref();
-//! _type_of_subscriber.unwrap().with_histograms(|hs| {
+//! downcaster.downcast(&dispatch).unwrap().with_histograms(|hs| {
 //!     for (span_group, hs) in hs {
 //!         for (event_group, h) in hs {
 //!             // make sure we see the latest samples:
@@ -437,6 +435,53 @@ where
             inner.spans.remove(span_id_to_slab_idx(&span));
             // we _keep_ the entry in inner.recorders in place, since it may be used by other spans
         }
+    }
+}
+
+/// A convenience type for getting access to [`TimingSubscriber`] through a `Dispatch`.
+#[derive(Debug, Copy)]
+pub struct Downcaster<NH, S, E> {
+    phantom: PhantomData<(NH, S, E)>,
+}
+
+impl<NH, S, E> Clone for Downcaster<NH, S, E> {
+    fn clone(&self) -> Self {
+        Self {
+            phantom: PhantomData,
+        }
+    }
+}
+
+impl<NH, S, E> TimingSubscriber<NH, S, E>
+where
+    S: SpanGroup,
+    E: EventGroup,
+    S::Id: Clone + Hash + Eq,
+    E::Id: Clone + Hash + Eq,
+{
+    /// Returns an identifier that can later be used to get access to this [`TimingSubscriber`]
+    /// after it has been turned into a `tracing::Dispatch`.
+    pub fn downcaster(&self) -> Downcaster<NH, S, E> {
+        Downcaster {
+            phantom: PhantomData,
+        }
+    }
+}
+
+impl<NH, S, E> Downcaster<NH, S, E>
+where
+    S: SpanGroup + 'static,
+    E: EventGroup + 'static,
+    S::Id: Clone + Hash + Eq + 'static,
+    E::Id: Clone + Hash + Eq + 'static,
+    NH: 'static,
+{
+    /// Retrieve a reference to this ident's original [`TimingSubscriber`].
+    ///
+    /// This method returns `None` if the given `Dispatch` is not holding a subscriber of the same
+    /// type as this ident was created from.
+    pub fn downcast<'a>(&self, d: &'a Dispatch) -> Option<&'a TimingSubscriber<NH, S, E>> {
+        d.downcast_ref()
     }
 }
 

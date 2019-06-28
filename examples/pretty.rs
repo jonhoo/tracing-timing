@@ -4,9 +4,7 @@ use tracing_timing::{Builder, Histogram};
 
 fn main() {
     let s = Builder::from(|| Histogram::new_with_bounds(10_000, 1_000_000, 3).unwrap()).build();
-
-    // black magic for Dispatch::downcast_ref (part 1)
-    let mut _type_of_s = if false { Some(&s) } else { None };
+    let sid = s.downcaster();
 
     let d = Dispatch::new(s);
     let d2 = d.clone();
@@ -28,9 +26,7 @@ fn main() {
     });
     std::thread::sleep(std::time::Duration::from_secs(15));
 
-    // black magic for Dispatch::downcast_ref (part 2)
-    _type_of_s = d.downcast_ref();
-    _type_of_s.unwrap().with_histograms(|hs| {
+    sid.downcast(&d).unwrap().with_histograms(|hs| {
         assert_eq!(hs.len(), 1);
         let hs = &mut hs.get_mut("request").unwrap();
         assert_eq!(hs.len(), 2);
