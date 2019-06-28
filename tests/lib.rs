@@ -116,6 +116,42 @@ fn by_field() {
 }
 
 #[test]
+fn dupe_span() {
+    let s = Builder::from(|| Histogram::new_with_max(200_000_000, 1).unwrap()).build();
+    let sid = s.downcaster();
+    let d = Dispatch::new(s);
+    let span = dispatcher::with_default(&d, || trace_span!("foo"));
+    let d1 = d.clone();
+    let span1 = span.clone();
+    let jh1 = std::thread::spawn(move || {
+        dispatcher::with_default(&d1, || {
+            span1.in_scope(|| {
+                trace!("thread1");
+            })
+        })
+    });
+    let span2 = span.clone();
+    let d2 = d.clone();
+    let jh2 = std::thread::spawn(move || {
+        dispatcher::with_default(&d2, || {
+            span2.in_scope(|| {
+                trace!("thread2");
+            })
+        })
+    });
+    drop(span);
+    jh1.join().unwrap();
+    jh2.join().unwrap();
+    sid.downcast(&d).unwrap().with_histograms(|hs| {
+        assert_eq!(hs.len(), 1);
+        let hs = &mut hs.get_mut("foo").unwrap();
+        assert_eq!(hs.len(), 2);
+        assert!(hs.contains_key("thread1"));
+        assert!(hs.contains_key("thread2"));
+    })
+}
+
+#[test]
 fn by_field_typed() {
     let s = Builder::from(|| Histogram::new_with_max(200_000_000, 1).unwrap())
         .events(group::ByField::from("f"))
