@@ -60,11 +60,10 @@ fn main() {
             h.value_at_quantile(0.999) / 1_000,
             h.max() / 1_000,
         );
-        for v in h
-            .iter_linear(25_000)
-            .skip_while(|v| v.quantile() < 0.01)
-            .take_while(|v| v.quantile() < 0.99)
-        {
+        for v in break_once(
+            h.iter_linear(25_000).skip_while(|v| v.quantile() < 0.01),
+            |v| v.quantile() > 0.95,
+        ) {
             println!(
                 "{:4}µs | {:40} | {:4.1}th %-ile",
                 (v.value_iterated_to() + 1) / 1_000,
@@ -86,11 +85,10 @@ fn main() {
             h.value_at_quantile(0.999) / 1_000,
             h.max() / 1_000,
         );
-        for v in h
-            .iter_linear(25_000)
-            .skip_while(|v| v.quantile() < 0.01)
-            .take_while(|v| v.quantile() < 0.99)
-        {
+        for v in break_once(
+            h.iter_linear(25_000).skip_while(|v| v.quantile() < 0.01),
+            |v| v.quantile() > 0.95,
+        ) {
             println!(
                 "{:4}µs | {:40} | {:4.1}th %-ile",
                 (v.value_iterated_to() + 1) / 1_000,
@@ -112,7 +110,7 @@ fn main() {
         trace.value_at_quantile(0.999) as f64 / 1000.0,
         trace.max() as f64 / 1000.0,
     );
-    for v in trace.iter_linear(500).take_while(|v| v.quantile() < 0.99) {
+    for v in break_once(trace.iter_linear(500), |v| v.quantile() > 0.95) {
         println!(
             "{:4.1}µs | {:40} | {:4.1}th %-ile",
             (v.value_iterated_to() + 1) as f64 / 1000.0,
@@ -121,5 +119,37 @@ fn main() {
             ),
             v.percentile()
         );
+    }
+}
+
+// until we have https://github.com/rust-lang/rust/issues/62208
+fn break_once<I, F>(it: I, mut f: F) -> impl Iterator<Item = I::Item>
+where
+    I: IntoIterator,
+    F: FnMut(&I::Item) -> bool,
+{
+    let mut got_true = false;
+    it.into_iter().take_while(move |i| {
+        if got_true {
+            // we've already yielded when f was true
+            return false;
+        }
+        if f(i) {
+            // this must be the first time f returns true
+            // we should yield i, and then no more
+            got_true = true;
+        }
+        // f returned false, so we should keep yielding
+        true
+    })
+}
+
+#[cfg(test)]
+mod botest {
+    use super::break_once;
+    #[test]
+    fn bo1() {
+        let xs = break_once(vec![1, 2, 3, 4, 3, 2, 1], |&v| v > 3).collect::<Vec<_>>();
+        assert_eq!(xs, vec![1, 2, 3, 4]);
     }
 }
