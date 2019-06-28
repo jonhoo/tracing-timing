@@ -68,6 +68,15 @@ impl EventGroup for ByMessage {
 #[derive(Default, Clone, Debug, Eq, PartialEq)]
 pub struct ByField(pub Cow<'static, str>);
 
+impl<T> From<T> for ByField
+where
+    T: Into<Cow<'static, str>>,
+{
+    fn from(t: T) -> Self {
+        Self(t.into())
+    }
+}
+
 struct ByFieldVisitor<'a> {
     field: &'a ByField,
     value: String,
