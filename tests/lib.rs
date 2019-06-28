@@ -86,7 +86,7 @@ fn by_default() {
         h.refresh();
         // ~= 100ms
         assert!(h.value_at_quantile(0.5) > 10_000_000);
-        assert!(h.value_at_quantile(0.5) < 150_000_000);
+        assert!(h.value_at_quantile(0.5) < 200_000_000);
     })
 }
 
