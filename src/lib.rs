@@ -18,7 +18,7 @@
 //! });
 //! ```
 //!
-//! You can produce something like this:
+//! You can produce something like this (see `examples/pretty.rs`):
 //!
 //! ```text
 //! fast:
