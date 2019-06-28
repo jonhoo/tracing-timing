@@ -424,7 +424,7 @@ where
     }
 
     fn drop_span(&self, span: span::Id) {
-        if 0 == self.writers.read().unwrap().refcount[span_id_to_slab_idx(&span)]
+        if 1 == self.writers.read().unwrap().refcount[span_id_to_slab_idx(&span)]
             .fetch_sub(1, atomic::Ordering::AcqRel)
         {
             // span has ended!
