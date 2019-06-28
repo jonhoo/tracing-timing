@@ -17,8 +17,9 @@ fn by_name() {
                 trace!("event");
             })
         })
-    });
-    std::thread::sleep(std::time::Duration::from_millis(10));
+    })
+    .join()
+    .unwrap();
     sid.downcast(&d).unwrap().with_histograms(|hs| {
         assert_eq!(hs.len(), 1);
         let hs = &mut hs.get_mut("foo").unwrap();
@@ -42,8 +43,9 @@ fn by_target() {
                 trace!(target: "e", "event");
             })
         })
-    });
-    std::thread::sleep(std::time::Duration::from_millis(10));
+    })
+    .join()
+    .unwrap();
     sid.downcast(&d).unwrap().with_histograms(|hs| {
         assert_eq!(hs.len(), 1);
         let hs = &mut hs.get_mut("lib").unwrap();
@@ -104,8 +106,9 @@ fn by_field() {
                 trace!({ ef = "event2" }, "slow");
             })
         })
-    });
-    std::thread::sleep(std::time::Duration::from_millis(10));
+    })
+    .join()
+    .unwrap();
     sid.downcast(&d).unwrap().with_histograms(|hs| {
         assert_eq!(hs.len(), 1);
         let hs = &mut hs.get_mut("span").unwrap();
@@ -167,8 +170,9 @@ fn by_field_typed() {
                 trace!({ f = -1i64 }, "");
             })
         })
-    });
-    std::thread::sleep(std::time::Duration::from_millis(10));
+    })
+    .join()
+    .unwrap();
     sid.downcast(&d).unwrap().with_histograms(|hs| {
         assert_eq!(hs.len(), 1);
         let hs = &mut hs.get_mut("foo").unwrap();
