@@ -16,7 +16,6 @@
 //!         trace!("slow");
 //!     })
 //! });
-//! eprintln!("FOO");
 //! ```
 //!
 //! You can produce something like this:
@@ -461,7 +460,7 @@ impl Default for ThreadId {
                 let tid = TID.with(|tid| tid.fetch_add(1, atomic::Ordering::AcqRel));
                 *mytid = Some(tid);
                 ThreadId {
-                    tid: tid,
+                    tid,
                     _notsend: PhantomData,
                 }
             }
