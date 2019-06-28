@@ -2,43 +2,55 @@ use tracing::*;
 use tracing_timing::{Builder, Histogram};
 
 fn main() {
-    let s = Builder::from(|| Histogram::new_with_bounds(10_000, 1_000_000, 3).unwrap()).build();
-
-    // black magic for Dispatch::downcast_ref (part 1)
+    let s = Builder::from(|| Histogram::new_with_max(1_000_000, 2).unwrap())
+        .events(tracing_timing::group::ByName)
+        .build();
     let mut _type_of_s = if false { Some(&s) } else { None };
-
     let d = Dispatch::new(s);
     let d2 = d.clone();
+    let mut trace = Histogram::<u64>::new_with_bounds(100, 8_000, 3)
+        .unwrap()
+        .into_sync();
+    let mut r_trace = trace.recorder();
     std::thread::spawn(move || {
         use rand::prelude::*;
         let mut rng = thread_rng();
         let fast = rand::distributions::Normal::new(100_000.0, 50_000.0);
         let slow = rand::distributions::Normal::new(500_000.0, 50_000.0);
+        let clock = quanta::Clock::new();
         dispatcher::with_default(&d2, || loop {
             let fast = std::time::Duration::from_nanos(fast.sample(&mut rng).max(0.0) as u64);
             let slow = std::time::Duration::from_nanos(slow.sample(&mut rng).max(0.0) as u64);
             trace_span!("request").in_scope(|| {
-                std::thread::sleep(fast); // emulate some work
+                std::thread::sleep(fast);
+                let a = clock.start();
                 trace!("fast");
-                std::thread::sleep(slow); // emulate some more work
+                let b = clock.end();
+                r_trace.saturating_record(b - a);
+                std::thread::sleep(slow);
+                let a = clock.start();
                 trace!("slow");
+                let b = clock.end();
+                r_trace.saturating_record(b - a);
             });
         })
     });
     std::thread::sleep(std::time::Duration::from_secs(15));
 
-    // black magic for Dispatch::downcast_ref (part 2)
+    // get trace info first, because refresh in with_histograms will slow down record in trace!
+    trace.refresh();
+
     _type_of_s = d.downcast_ref();
     _type_of_s.unwrap().with_histograms(|hs| {
         assert_eq!(hs.len(), 1);
         let hs = &mut hs.get_mut("request").unwrap();
         assert_eq!(hs.len(), 2);
 
-        hs.get_mut("fast").unwrap().refresh();
-        hs.get_mut("slow").unwrap().refresh();
+        hs.get_mut("event examples/pretty.rs:27").unwrap().refresh();
+        hs.get_mut("event examples/pretty.rs:32").unwrap().refresh();
 
         println!("fast:");
-        let h = &hs["fast"];
+        let h = &hs["event examples/pretty.rs:27"];
         println!(
             "mean: {:.1}µs, p50: {}µs, p90: {}µs, p99: {}µs, p999: {}µs, max: {}µs",
             h.mean() / 1000.0,
@@ -63,7 +75,7 @@ fn main() {
         }
 
         println!("\nslow:");
-        let h = &hs["slow"];
+        let h = &hs["event examples/pretty.rs:32"];
         println!(
             "mean: {:.1}µs, p50: {}µs, p90: {}µs, p99: {}µs, p999: {}µs, max: {}µs",
             h.mean() / 1000.0,
@@ -87,6 +99,27 @@ fn main() {
             );
         }
     });
+
+    println!("\ntrace!:");
+    println!(
+        "mean: {:.1}µs, p50: {:.1}µs, p90: {:.1}µs, p99: {:.1}µs, p999: {:.1}µs, max: {:.1}µs",
+        trace.mean() / 1000.0,
+        trace.value_at_quantile(0.5) as f64 / 1000.0,
+        trace.value_at_quantile(0.9) as f64 / 1000.0,
+        trace.value_at_quantile(0.99) as f64 / 1000.0,
+        trace.value_at_quantile(0.999) as f64 / 1000.0,
+        trace.max() as f64 / 1000.0,
+    );
+    for v in break_once(trace.iter_linear(500), |v| v.quantile() > 0.95) {
+        println!(
+            "{:4.1}µs | {:40} | {:4.1}th %-ile",
+            (v.value_iterated_to() + 1) as f64 / 1000.0,
+            "*".repeat(
+                (v.count_since_last_iteration() as f64 * 40.0 / trace.len() as f64).ceil() as usize
+            ),
+            v.percentile()
+        );
+    }
 }
 
 // until we have https://github.com/rust-lang/rust/issues/62208
@@ -109,4 +142,14 @@ where
         // f returned false, so we should keep yielding
         true
     })
+}
+
+#[cfg(test)]
+mod botest {
+    use super::break_once;
+    #[test]
+    fn bo1() {
+        let xs = break_once(vec![1, 2, 3, 4, 3, 2, 1], |&v| v > 3).collect::<Vec<_>>();
+        assert_eq!(xs, vec![1, 2, 3, 4]);
+    }
 }

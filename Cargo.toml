@@ -1,8 +1,23 @@
 [package]
 name = "tracing-timing"
 version = "0.1.0"
-authors = ["Jon Gjengset <jon@thesquareplanet.com>"]
 edition = "2018"
+authors = ["Jon Gjengset <jon@thesquareplanet.com>"]
+
+license = "MIT"
+
+readme = "README.md"
+description = "Inter-event timing metrics on top of tracing."
+repository = "https://github.com/jonhoo/tracing-timing.git"
+
+keywords = ["perf", "tracing", "profiling"]
+categories = ["development-tools::profiling", "visualization"]
+
+[badges]
+travis-ci = { repository = "jonhoo/tracing-timing" }
+cirrus-ci = { repository = "jonhoo/tracing-timing" }
+codecov = { repository = "jonhoo/tracing-timing", branch = "master", service = "github" }
+maintenance = { status = "experimental" }
 
 [dependencies]
 tracing-core = { git = "https://github.com/tokio-rs/tracing.git" }
