@@ -20,7 +20,7 @@ codecov = { repository = "jonhoo/tracing-timing", branch = "master", service = "
 maintenance = { status = "experimental" }
 
 [dependencies]
-tracing-core = { git = "https://github.com/tokio-rs/tracing.git" }
+tracing-core = "0.1"
 hdrhistogram = "6.3.3"
 slab = "0.4"
 quanta = "0.3"
@@ -28,7 +28,7 @@ fxhash = "0.2"
 crossbeam = "0.7"
 
 [dev-dependencies]
-tracing = { git = "https://github.com/tokio-rs/tracing.git" }
+tracing = "0.1"
 rand = "0.7"
 rand_distr = "0.2.1"
 
