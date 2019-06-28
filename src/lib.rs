@@ -549,13 +549,13 @@ mod test {
             let h = &mut hs.get_mut("fast").unwrap();
             h.refresh();
             // ~= 10ms
-            assert!(h.value_at_quantile(0.5) > 5_000_000);
-            assert!(h.value_at_quantile(0.5) < 15_000_000);
+            assert!(h.value_at_quantile(0.5) > 1_000_000);
+            assert!(h.value_at_quantile(0.5) < 20_000_000);
 
             let h = &mut hs.get_mut("slow").unwrap();
             h.refresh();
             // ~= 100ms
-            assert!(h.value_at_quantile(0.5) > 50_000_000);
+            assert!(h.value_at_quantile(0.5) > 10_000_000);
             assert!(h.value_at_quantile(0.5) < 150_000_000);
         })
     }
