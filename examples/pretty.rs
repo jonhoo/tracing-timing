@@ -8,7 +8,7 @@ fn main() {
     let mut _type_of_s = if false { Some(&s) } else { None };
     let d = Dispatch::new(s);
     let d2 = d.clone();
-    let mut trace = Histogram::<u64>::new_with_bounds(1_000, 16_000, 3)
+    let mut trace = Histogram::<u64>::new_with_bounds(100, 8_000, 3)
         .unwrap()
         .into_sync();
     let mut r_trace = trace.recorder();
@@ -23,17 +23,23 @@ fn main() {
             let slow = std::time::Duration::from_nanos(slow.sample(&mut rng).max(0.0) as u64);
             trace_span!("request").in_scope(|| {
                 std::thread::sleep(fast);
-                let a = clock.now();
+                let a = clock.start();
                 trace!("fast");
-                r_trace.saturating_record(clock.now() - a);
+                let b = clock.end();
+                r_trace.saturating_record(b - a);
                 std::thread::sleep(slow);
-                let a = clock.now();
+                let a = clock.start();
                 trace!("slow");
-                r_trace.saturating_record(clock.now() - a);
+                let b = clock.end();
+                r_trace.saturating_record(b - a);
             });
         })
     });
     std::thread::sleep(std::time::Duration::from_secs(15));
+
+    // get trace info first, because refresh in with_histograms will slow down record in trace!
+    trace.refresh();
+
     _type_of_s = d.downcast_ref();
     _type_of_s.unwrap().with_histograms(|hs| {
         assert_eq!(hs.len(), 1);
@@ -41,55 +47,79 @@ fn main() {
         assert_eq!(hs.len(), 2);
 
         hs.get_mut("event examples/pretty.rs:27").unwrap().refresh();
-        hs.get_mut("event examples/pretty.rs:31").unwrap().refresh();
+        hs.get_mut("event examples/pretty.rs:32").unwrap().refresh();
 
         println!("fast:");
         let h = &hs["event examples/pretty.rs:27"];
+        println!(
+            "mean: {:.1}µs, p50: {}µs, p90: {}µs, p99: {}µs, p999: {}µs, max: {}µs",
+            h.mean() / 1000.0,
+            h.value_at_quantile(0.5) / 1_000,
+            h.value_at_quantile(0.9) / 1_000,
+            h.value_at_quantile(0.99) / 1_000,
+            h.value_at_quantile(0.999) / 1_000,
+            h.max() / 1_000,
+        );
         for v in h
-            .iter_linear(50_000)
-            .take_while(|v| v.value_iterated_to() < 400_000)
+            .iter_linear(25_000)
+            .skip_while(|v| v.quantile() < 0.01)
+            .take_while(|v| v.quantile() < 0.99)
         {
             println!(
-                "{:4}µs | {}",
+                "{:4}µs | {:40} | {:4.1}th %-ile",
                 (v.value_iterated_to() + 1) / 1_000,
                 "*".repeat(
-                    (v.count_since_last_iteration() as f64 * 40.0 / h.len() as f64).round()
-                        as usize
-                )
+                    (v.count_since_last_iteration() as f64 * 40.0 / h.len() as f64).ceil() as usize
+                ),
+                v.percentile(),
             );
         }
 
         println!("\nslow:");
-        let h = &hs["event examples/pretty.rs:31"];
+        let h = &hs["event examples/pretty.rs:32"];
+        println!(
+            "mean: {:.1}µs, p50: {}µs, p90: {}µs, p99: {}µs, p999: {}µs, max: {}µs",
+            h.mean() / 1000.0,
+            h.value_at_quantile(0.5) / 1_000,
+            h.value_at_quantile(0.9) / 1_000,
+            h.value_at_quantile(0.99) / 1_000,
+            h.value_at_quantile(0.999) / 1_000,
+            h.max() / 1_000,
+        );
         for v in h
-            .iter_linear(50_000)
-            .skip_while(|v| v.value_iterated_to() < 400_000)
-            .take_while(|v| v.value_iterated_to() < 800_000)
+            .iter_linear(25_000)
+            .skip_while(|v| v.quantile() < 0.01)
+            .take_while(|v| v.quantile() < 0.99)
         {
             println!(
-                "{:4}µs | {}",
+                "{:4}µs | {:40} | {:4.1}th %-ile",
                 (v.value_iterated_to() + 1) / 1_000,
                 "*".repeat(
-                    (v.count_since_last_iteration() as f64 * 40.0 / h.len() as f64).round()
-                        as usize
-                )
+                    (v.count_since_last_iteration() as f64 * 40.0 / h.len() as f64).ceil() as usize
+                ),
+                v.percentile(),
             );
         }
     });
 
-    trace.refresh();
     println!("\ntrace!:");
-    for v in trace
-        .iter_linear(1_000)
-        .take_while(|v| v.value_iterated_to() < 16_000)
-    {
+    println!(
+        "mean: {:.1}µs, p50: {:.1}µs, p90: {:.1}µs, p99: {:.1}µs, p999: {:.1}µs, max: {:.1}µs",
+        trace.mean() / 1000.0,
+        trace.value_at_quantile(0.5) as f64 / 1000.0,
+        trace.value_at_quantile(0.9) as f64 / 1000.0,
+        trace.value_at_quantile(0.99) as f64 / 1000.0,
+        trace.value_at_quantile(0.999) as f64 / 1000.0,
+        trace.max() as f64 / 1000.0,
+    );
+    for v in trace.iter_linear(500).take_while(|v| v.quantile() < 0.99) {
         println!(
-            "{:4}µs | {}",
-            (v.value_iterated_to() + 1) / 1_000,
+            "{:4.1}µs | {:40} | {:4.1}th %-ile",
+            (v.value_iterated_to() + 1) as f64 / 1000.0,
             "*".repeat(
-                (v.count_since_last_iteration() as f64 * 40.0 / trace.len() as f64).round()
-                    as usize
-            )
+                (v.count_since_last_iteration() as f64 * 40.0 / trace.len() as f64).ceil() as usize
+            ),
+            v.percentile()
         );
     }
 }
