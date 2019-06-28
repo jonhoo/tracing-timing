@@ -2,7 +2,9 @@ use tracing::*;
 use tracing_timing::{Builder, Histogram};
 
 fn main() {
-    let s = Builder::from(|| Histogram::new_with_max(1_000_000, 2).unwrap()).build();
+    let s = Builder::from(|| Histogram::new_with_max(1_000_000, 2).unwrap())
+        .events(tracing_timing::group::ByName)
+        .build();
     let mut _type_of_s = if false { Some(&s) } else { None };
     let d = Dispatch::new(s);
     let d2 = d.clone();
@@ -31,18 +33,18 @@ fn main() {
             });
         })
     });
-    std::thread::sleep(std::time::Duration::from_secs(10));
+    std::thread::sleep(std::time::Duration::from_secs(15));
     _type_of_s = d.downcast_ref();
     _type_of_s.unwrap().with_histograms(|hs| {
         assert_eq!(hs.len(), 1);
         let hs = &mut hs.get_mut("request").unwrap();
         assert_eq!(hs.len(), 2);
 
-        hs.get_mut("fast").unwrap().refresh();
-        hs.get_mut("slow").unwrap().refresh();
+        hs.get_mut("event examples/pretty.rs:27").unwrap().refresh();
+        hs.get_mut("event examples/pretty.rs:31").unwrap().refresh();
 
         println!("fast:");
-        let h = &hs["fast"];
+        let h = &hs["event examples/pretty.rs:27"];
         for v in h
             .iter_linear(50_000)
             .take_while(|v| v.value_iterated_to() < 400_000)
@@ -58,7 +60,7 @@ fn main() {
         }
 
         println!("\nslow:");
-        let h = &hs["slow"];
+        let h = &hs["event examples/pretty.rs:31"];
         for v in h
             .iter_linear(50_000)
             .skip_while(|v| v.value_iterated_to() < 400_000)

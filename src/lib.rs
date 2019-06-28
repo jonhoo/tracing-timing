@@ -369,20 +369,19 @@ where
 
     fn new_span(&self, span: &span::Attributes) -> span::Id {
         let mut inner = self.writers.write().unwrap();
-        let id = inner
-            .last_event
-            .insert(atomic::AtomicU64::new(self.time.now()));
-        let id2 = inner.refcount.insert(atomic::AtomicUsize::new(1));
-        assert_eq!(id, id2);
+        let id = inner.refcount.insert(atomic::AtomicUsize::new(1));
         let sg = self.span_group.group(span);
         let id2 = inner.spans.insert(sg.clone());
         assert_eq!(id, id2);
-        let id = span::Id::from_u64(id as u64 + 1);
         inner
             .idle_recorders
             .entry(sg)
             .or_insert_with(HashMap::default);
-        id
+        let id2 = inner
+            .last_event
+            .insert(atomic::AtomicU64::new(self.time.now()));
+        assert_eq!(id, id2);
+        span::Id::from_u64(id as u64 + 1)
     }
 
     fn record(&self, _: &span::Id, _: &span::Record) {}
