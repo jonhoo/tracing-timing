@@ -98,7 +98,7 @@ fn by_field() {
     let d = Dispatch::new(s);
     let d2 = d.clone();
     std::thread::spawn(move || {
-        dispatcher::with_default(&d2, || loop {
+        dispatcher::with_default(&d2, || {
             trace_span!("foo", sf = "span").in_scope(|| {
                 trace!({ ef = "event1" }, "fast");
                 trace!({ ef = "event2" }, "slow");
@@ -160,7 +160,7 @@ fn by_field_typed() {
     let d = Dispatch::new(s);
     let d2 = d.clone();
     std::thread::spawn(move || {
-        dispatcher::with_default(&d2, || loop {
+        dispatcher::with_default(&d2, || {
             trace_span!("foo").in_scope(|| {
                 trace!({ f = 1u64 }, "");
                 trace!({ f = true }, "");
