@@ -29,7 +29,8 @@ crossbeam = "0.7"
 
 [dev-dependencies]
 tracing = { git = "https://github.com/tokio-rs/tracing.git" }
-rand = "0.6"
+rand = "0.7"
+rand_distr = "0.2.1"
 
 [profile.release]
 debug = true

@@ -1,3 +1,4 @@
+use rand_distr::Normal;
 use tracing::*;
 use tracing_timing::{Builder, Histogram};
 
@@ -12,8 +13,8 @@ fn main() {
     std::thread::spawn(move || {
         use rand::prelude::*;
         let mut rng = thread_rng();
-        let fast = rand::distributions::Normal::new(100_000.0, 50_000.0);
-        let slow = rand::distributions::Normal::new(500_000.0, 50_000.0);
+        let fast = Normal::<f64>::new(100_000.0, 50_000.0).unwrap();
+        let slow = Normal::<f64>::new(500_000.0, 50_000.0).unwrap();
         dispatcher::with_default(&d2, || loop {
             let fast = std::time::Duration::from_nanos(fast.sample(&mut rng).max(0.0) as u64);
             let slow = std::time::Duration::from_nanos(slow.sample(&mut rng).max(0.0) as u64);
