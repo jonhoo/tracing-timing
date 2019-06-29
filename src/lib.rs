@@ -63,20 +63,19 @@
 //! access to the histograms for all groups. Note that you must call `refresh()` on each histogram
 //! to see its latest values (see [`hdrhistogram::SyncHistogram`]).
 //!
-//! To access the histograms, you can use `tracing::Dispatch::downcast_ref`, _or_ you can get a
-//! [`Downcaster`]:
+//! To access the histograms later, use `tracing::Dispatch::downcast_ref`. If your type is hard to
+//! name, you can use a [`TimingSubscriber::downcaster`] instead.
 //!
 //! ```rust
 //! use tracing::*;
-//! use tracing_timing::{Builder, Histogram};
+//! use tracing_timing::{Builder, Histogram, TimingSubscriber};
 //! let subscriber = Builder::from(|| Histogram::new_with_max(1_000_000, 2).unwrap()).build();
-//! let downcaster = subscriber.downcaster();
 //! let dispatch = Dispatch::new(subscriber);
 //! // ...
 //! // code that hands off clones of the dispatch
 //! // maybe to other threads
 //! // ...
-//! downcaster.downcast(&dispatch).unwrap().with_histograms(|hs| {
+//! dispatch.downcast_ref::<TimingSubscriber>().unwrap().with_histograms(|hs| {
 //!     for (span_group, hs) in hs {
 //!         for (event_group, h) in hs {
 //!             // make sure we see the latest samples:
@@ -173,7 +172,7 @@ fn span_id_to_slab_idx(span: &span::Id) -> usize {
     span.into_u64() as usize - 1
 }
 
-struct WriterState<NH, S, E> {
+struct WriterState<S, E> {
     // We need fast access to the last event for each span.
     last_event: Slab<atomic::AtomicU64>,
 
@@ -198,7 +197,7 @@ struct WriterState<NH, S, E> {
     // TODO:
     // placing this in a ShardedLock requires that it is Sync, but it's only ever used when you're
     // holding the write lock. not sure how to describe this in the type system.
-    new_histogram: NH,
+    new_histogram: Box<FnMut() -> Histogram<u64> + Send + Sync>,
 }
 
 struct ReaderState<S, E> {
@@ -213,7 +212,7 @@ struct ReaderState<S, E> {
 /// See the [crate-level docs] for details.
 ///
 ///   [crate-level docs]: ../
-pub struct TimingSubscriber<NH, S = group::ByName, E = group::ByMessage>
+pub struct TimingSubscriber<S = group::ByName, E = group::ByMessage>
 where
     S: SpanGroup,
     E: EventGroup,
@@ -224,17 +223,16 @@ where
     event_group: E,
     time: quanta::Clock,
 
-    writers: ShardedLock<WriterState<NH, S::Id, E::Id>>,
+    writers: ShardedLock<WriterState<S::Id, E::Id>>,
     reader: Mutex<ReaderState<S::Id, E::Id>>,
 }
 
-impl<NH, S, E> TimingSubscriber<NH, S, E>
+impl<S, E> TimingSubscriber<S, E>
 where
     S: SpanGroup,
     E: EventGroup,
     S::Id: Clone + Hash + Eq,
     E::Id: Clone + Hash + Eq,
-    NH: FnMut() -> Histogram<u64> + Send,
 {
     fn time(&self, span: &span::Id, event: &Event) {
         let now = self.time.now();
@@ -359,13 +357,12 @@ where
     }
 }
 
-impl<NH, S, E> Subscriber for TimingSubscriber<NH, S, E>
+impl<S, E> Subscriber for TimingSubscriber<S, E>
 where
     S: SpanGroup + 'static,
     E: EventGroup + 'static,
     S::Id: Clone + Hash + Eq + 'static,
     E::Id: Clone + Hash + Eq + 'static,
-    NH: FnMut() -> Histogram<u64> + Send + 'static,
 {
     fn enabled(&self, _: &Metadata) -> bool {
         true
@@ -446,12 +443,14 @@ where
 }
 
 /// A convenience type for getting access to [`TimingSubscriber`] through a `Dispatch`.
+///
+/// See [`TimingSubscriber::downcaster`].
 #[derive(Debug, Copy)]
-pub struct Downcaster<NH, S, E> {
-    phantom: PhantomData<(NH, S, E)>,
+pub struct Downcaster<S, E> {
+    phantom: PhantomData<(S, E)>,
 }
 
-impl<NH, S, E> Clone for Downcaster<NH, S, E> {
+impl<S, E> Clone for Downcaster<S, E> {
     fn clone(&self) -> Self {
         Self {
             phantom: PhantomData,
@@ -459,7 +458,7 @@ impl<NH, S, E> Clone for Downcaster<NH, S, E> {
     }
 }
 
-impl<NH, S, E> TimingSubscriber<NH, S, E>
+impl<S, E> TimingSubscriber<S, E>
 where
     S: SpanGroup,
     E: EventGroup,
@@ -468,26 +467,48 @@ where
 {
     /// Returns an identifier that can later be used to get access to this [`TimingSubscriber`]
     /// after it has been turned into a `tracing::Dispatch`.
-    pub fn downcaster(&self) -> Downcaster<NH, S, E> {
+    ///
+    /// ```rust
+    /// use tracing::*;
+    /// use tracing_timing::{Builder, Histogram, TimingSubscriber};
+    /// let subscriber = Builder::from(|| Histogram::new_with_max(1_000_000, 2).unwrap()).build();
+    /// let downcaster = subscriber.downcaster();
+    /// let dispatch = Dispatch::new(subscriber);
+    /// // ...
+    /// // code that hands off clones of the dispatch
+    /// // maybe to other threads
+    /// // ...
+    /// downcaster.downcast(&dispatch).unwrap().with_histograms(|hs| {
+    ///     for (span_group, hs) in hs {
+    ///         for (event_group, h) in hs {
+    ///             // make sure we see the latest samples:
+    ///             h.refresh();
+    ///             // print the median:
+    ///             println!("{} -> {}: {}ns", span_group, event_group, h.value_at_quantile(0.5))
+    ///         }
+    ///     }
+    /// });
+    /// ```
+    ///
+    pub fn downcaster(&self) -> Downcaster<S, E> {
         Downcaster {
             phantom: PhantomData,
         }
     }
 }
 
-impl<NH, S, E> Downcaster<NH, S, E>
+impl<S, E> Downcaster<S, E>
 where
     S: SpanGroup + 'static,
     E: EventGroup + 'static,
     S::Id: Clone + Hash + Eq + 'static,
     E::Id: Clone + Hash + Eq + 'static,
-    NH: 'static,
 {
     /// Retrieve a reference to this ident's original [`TimingSubscriber`].
     ///
     /// This method returns `None` if the given `Dispatch` is not holding a subscriber of the same
     /// type as this ident was created from.
-    pub fn downcast<'a>(&self, d: &'a Dispatch) -> Option<&'a TimingSubscriber<NH, S, E>> {
+    pub fn downcast<'a>(&self, d: &'a Dispatch) -> Option<&'a TimingSubscriber<S, E>> {
         d.downcast_ref()
     }
 }

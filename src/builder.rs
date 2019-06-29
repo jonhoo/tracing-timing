@@ -68,13 +68,13 @@ impl<NH, S, E> Builder<NH, S, E> {
     }
 
     /// Construct a [`TimingSubscriber`] as configured.
-    pub fn build(self) -> TimingSubscriber<NH, S, E>
+    pub fn build(self) -> TimingSubscriber<S, E>
     where
         S: SpanGroup,
         E: EventGroup,
         S::Id: Hash + Eq,
         E::Id: Hash + Eq,
-        NH: FnMut() -> Histogram<u64>,
+        NH: FnMut() -> Histogram<u64> + Send + Sync + 'static,
     {
         let (tx, rx) = crossbeam::channel::unbounded();
         TimingSubscriber {
@@ -92,7 +92,7 @@ impl<NH, S, E> Builder<NH, S, E> {
                 spans: Default::default(),
                 tls: Default::default(),
                 idle_recorders: Default::default(),
-                new_histogram: self.new_histogram,
+                new_histogram: Box::new(self.new_histogram),
                 created: tx,
             }
             .into(),
