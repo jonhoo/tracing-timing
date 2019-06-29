@@ -32,6 +32,23 @@ fn by_name() {
 }
 
 #[test]
+fn downcaster() {
+    let s = Builder::from(|| Histogram::new_with_max(200_000_000, 1).unwrap())
+        .spans(group::ByName)
+        .events(group::ByName)
+        .build();
+    let sid = s.downcaster();
+    let sid2 = sid.clone();
+    let d = Dispatch::new(s);
+
+    // can downcast through a Downcaster
+    sid.downcast(&d).unwrap();
+
+    // can downcast through a cloned Downcaster
+    sid2.downcast(&d).unwrap();
+}
+
+#[test]
 fn by_target() {
     let s = Builder::from(|| Histogram::new_with_max(200_000_000, 1).unwrap())
         .spans(group::ByTarget)
@@ -154,6 +171,37 @@ fn dupe_span() {
         assert_eq!(hs.len(), 2);
         assert!(hs.contains_key("thread1"));
         assert!(hs.contains_key("thread2"));
+    })
+}
+
+#[test]
+fn same_event_two_threads() {
+    let s = Builder::from(|| Histogram::new_with_max(200_000_000, 1).unwrap()).build();
+    let sid = s.downcaster();
+    let d = Dispatch::new(s);
+    let d1 = d.clone();
+    let jh1 = std::thread::spawn(move || {
+        dispatcher::with_default(&d1, || {
+            trace_span!("span").in_scope(|| {
+                trace!("event");
+            })
+        })
+    });
+    let d2 = d.clone();
+    let jh2 = std::thread::spawn(move || {
+        dispatcher::with_default(&d2, || {
+            trace_span!("span").in_scope(|| {
+                trace!("event");
+            })
+        })
+    });
+    jh1.join().unwrap();
+    jh2.join().unwrap();
+    sid.downcast(&d).unwrap().with_histograms(|hs| {
+        assert_eq!(hs.len(), 1);
+        let hs = &mut hs.get_mut("span").unwrap();
+        assert_eq!(hs.len(), 1);
+        assert!(hs.contains_key("event"));
     })
 }
 
