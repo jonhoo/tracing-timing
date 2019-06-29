@@ -289,6 +289,7 @@ where
             let sid = &inner.spans[span_id_to_slab_idx(span)];
 
             // we know no-one else has our TID:
+            // NOTE: it's _not_ safe to use this after we drop the lock due to force_synchronize.
             let tls = unsafe { &mut *tls.get() };
 
             // the span id _must_ be known, as it's added when created
@@ -354,6 +355,32 @@ where
             .or_insert_with(Default::default)
             .insert(eid, recorder);
         assert!(r.is_none());
+    }
+
+    /// Force all current timing information to be refreshed immediately.
+    ///
+    /// Note that this will interrupt all concurrent metrics gathering until it returns.
+    pub fn force_synchronize(&self) {
+        // first, remove all thread-local recorders
+        let mut inner = self.writers.write().unwrap();
+        // note that we don't remove the tls _entry_,
+        // since that would make all writers take the write lock later!
+        for tls in inner.tls.values_mut() {
+            // we hold the write lock, so we know no other thread is using its tls.
+            let tls = unsafe { &mut *tls.get() };
+            tls.clear();
+        }
+        // now that we've done that, refresh all the histograms. we do it with a 0 timeout since we
+        // know that dropping all the recorders above will cause refresh to see up-to-date values,
+        // and we don't care about samples coming _after_ the clear above.
+        drop(inner);
+        self.with_histograms(|hs| {
+            for (_, hs) in hs {
+                for (_, h) in hs {
+                    h.refresh_timeout(std::time::Duration::new(0, 0));
+                }
+            }
+        })
     }
 
     /// Access the timing histograms.
