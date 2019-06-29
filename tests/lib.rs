@@ -260,3 +260,30 @@ fn informed_histogram_constructor() {
         assert!(hs.contains_key("event"));
     })
 }
+
+#[test]
+fn by_closure() {
+    let s = Builder::default()
+        .spans(|_: &span::Attributes| ())
+        .events(|_: &Event| ())
+        .build(|| Histogram::new_with_max(200_000_000, 1).unwrap());
+    let sid = s.downcaster();
+    let d = Dispatch::new(s);
+    let d2 = d.clone();
+    std::thread::spawn(move || {
+        dispatcher::with_default(&d2, || {
+            trace_span!("foo").in_scope(|| {
+                trace!({ f = 1u64 }, "");
+                trace!("foo");
+            })
+        })
+    })
+    .join()
+    .unwrap();
+    sid.downcast(&d).unwrap().with_histograms(|hs| {
+        assert_eq!(hs.len(), 1);
+        let hs = &mut hs.get_mut(&()).unwrap();
+        assert_eq!(hs.len(), 1);
+        assert!(hs.contains_key(&()));
+    })
+}

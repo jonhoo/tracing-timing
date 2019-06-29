@@ -6,6 +6,26 @@ use std::borrow::Cow;
 use std::fmt::Write;
 use tracing_core::*;
 
+impl<F, R> SpanGroup for F
+where
+    F: Fn(&span::Attributes) -> R,
+{
+    type Id = R;
+    fn group(&self, a: &span::Attributes) -> Self::Id {
+        (self)(a)
+    }
+}
+
+impl<F, R> EventGroup for F
+where
+    F: Fn(&Event) -> R,
+{
+    type Id = R;
+    fn group(&self, e: &Event) -> Self::Id {
+        (self)(e)
+    }
+}
+
 /// Group spans/events by their configured `target`.
 ///
 /// This is usually the module path where the span or event was created.

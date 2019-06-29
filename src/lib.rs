@@ -147,6 +147,21 @@ type Map<S, E, T> = HashMap<S, HashMap<E, T>>;
 ///
 /// All spans whose attributes produce the same `Id`-typed value when passed through `group`
 /// share a namespace for the groups produced by [`EventGroup::group`] on their contained events.
+///
+/// This trait is implemented for all functions with the appropriate signature. Note that you _may_
+/// run into weird lifetime errors from the compiler when using a closure as a `SpanGroup`. This is
+/// a [known compiler issue]. You can work around it by adding a slight type hint to the arguments
+/// passed to the closure as follows (note the `: &_`):
+///
+/// ```rust
+/// use tracing_timing::{Builder, Histogram};
+/// use tracing::span;
+/// let s = Builder::default()
+///     .spans(|_: &span::Attributes| "all spans as one")
+///     .build(|| Histogram::new(3).unwrap());
+/// ```
+///
+///   [known compiler issue]: https://github.com/rust-lang/rust/issues/41078
 pub trait SpanGroup {
     /// The type of the timing span group.
     type Id;
@@ -160,6 +175,21 @@ pub trait SpanGroup {
 /// All events that share a [`SpanGroup`], and whose attributes produce the same `Id`-typed value
 /// when passed through `group`, are considered a single timing target, and have their samples
 /// recorded together.
+///
+/// This trait is implemented for all functions with the appropriate signature. Note that you _may_
+/// run into weird lifetime errors from the compiler when using a closure as an `EventGroup`. This
+/// is a [known compiler issue]. You can work around it by adding a slight type hint to the
+/// arguments passed to the closure as follows (note the `: &_`):
+///
+/// ```rust
+/// use tracing_timing::{Builder, Histogram};
+/// use tracing::Event;
+/// let s = Builder::default()
+///     .events(|_: &Event| "all events as one")
+///     .build(|| Histogram::new(3).unwrap());
+/// ```
+///
+///   [known compiler issue]: https://github.com/rust-lang/rust/issues/41078
 pub trait EventGroup {
     /// The type of the timing event group.
     type Id;
