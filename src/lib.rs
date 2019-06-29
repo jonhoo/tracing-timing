@@ -375,8 +375,8 @@ where
         // and we don't care about samples coming _after_ the clear above.
         drop(inner);
         self.with_histograms(|hs| {
-            for (_, hs) in hs {
-                for (_, h) in hs {
+            for hs in hs.values_mut() {
+                for h in hs.values_mut() {
                     h.refresh_timeout(std::time::Duration::new(0, 0));
                 }
             }
