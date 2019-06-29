@@ -492,7 +492,7 @@ where
     }
 }
 
-#[derive(Hash, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Hash, Eq, PartialEq, Ord, PartialOrd, Debug, Copy, Clone)]
 #[repr(transparent)]
 struct ThreadId {
     tid: usize,
