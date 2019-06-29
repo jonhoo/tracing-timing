@@ -24,6 +24,9 @@ fn by_name() {
         assert_eq!(hs.len(), 1);
         let hs = &mut hs.get_mut("foo").unwrap();
         assert_eq!(hs.len(), 1);
+        #[cfg(windows)]
+        assert!(hs.contains_key("event tests\\lib.rs:17"));
+        #[cfg(not(windows))]
         assert!(hs.contains_key("event tests/lib.rs:17"));
     })
 }
