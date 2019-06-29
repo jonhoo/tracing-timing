@@ -135,9 +135,9 @@ fn samples() {
         dispatcher::with_default(&d2, || {
             for _ in 0..n {
                 trace_span!("foo").in_scope(|| {
-                    std::thread::sleep(std::time::Duration::from_micros(100));
+                    std::thread::sleep(std::time::Duration::from_millis(1));
                     trace!("fast");
-                    std::thread::sleep(std::time::Duration::from_micros(500));
+                    std::thread::sleep(std::time::Duration::from_millis(5));
                     trace!("slow");
                 })
             }
@@ -154,14 +154,14 @@ fn samples() {
         let h = &mut hs.get_mut("fast").unwrap();
         // ~= 100µs
         assert_eq!(h.len(), n);
-        assert!(h.value_at_quantile(0.5) > 20_000);
-        assert!(h.value_at_quantile(0.5) < 500_000);
+        assert!(h.value_at_quantile(0.5) > 200_000);
+        assert!(h.value_at_quantile(0.5) < 5_000_000);
 
         let h = &mut hs.get_mut("slow").unwrap();
         // ~= 500µs
         assert_eq!(h.len(), n);
-        assert!(h.value_at_quantile(0.5) > 10_000);
-        assert!(h.value_at_quantile(0.5) < 2_500_000);
+        assert!(h.value_at_quantile(0.5) > 1_000_000);
+        assert!(h.value_at_quantile(0.5) < 25_000_000);
     })
 }
 
