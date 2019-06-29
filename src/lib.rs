@@ -129,9 +129,10 @@ use tracing_core::*;
 
 type HashMap<K, V> = std::collections::HashMap<K, V, fxhash::FxBuildHasher>;
 
+static TID: atomic::AtomicUsize = atomic::AtomicUsize::new(0);
+
 thread_local! {
     static SPAN: RefCell<Option<span::Id>> = RefCell::new(None);
-    static TID: atomic::AtomicUsize = atomic::AtomicUsize::new(0);
     static MYTID: RefCell<Option<usize>> = RefCell::new(None);
 }
 
@@ -508,7 +509,7 @@ impl Default for ThreadId {
                     _notsend: PhantomData,
                 }
             } else {
-                let tid = TID.with(|tid| tid.fetch_add(1, atomic::Ordering::AcqRel));
+                let tid = TID.fetch_add(1, atomic::Ordering::AcqRel);
                 *mytid = Some(tid);
                 ThreadId {
                     tid,
