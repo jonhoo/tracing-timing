@@ -78,32 +78,21 @@ fn by_default() {
     let d = Dispatch::new(s);
     let d2 = d.clone();
     std::thread::spawn(move || {
-        dispatcher::with_default(&d2, || loop {
+        dispatcher::with_default(&d2, || {
             trace_span!("foo").in_scope(|| {
-                std::thread::sleep(std::time::Duration::from_millis(10));
                 trace!("fast");
-                std::thread::sleep(std::time::Duration::from_millis(100));
                 trace!("slow");
             })
         })
-    });
-    std::thread::sleep(std::time::Duration::from_millis(500));
+    })
+    .join()
+    .unwrap();
     sid.downcast(&d).unwrap().with_histograms(|hs| {
         assert_eq!(hs.len(), 1);
         let hs = &mut hs.get_mut("foo").unwrap();
         assert_eq!(hs.len(), 2);
-
-        let h = &mut hs.get_mut("fast").unwrap();
-        h.refresh();
-        // ~= 10ms
-        assert!(h.value_at_quantile(0.5) > 2_000_000);
-        assert!(h.value_at_quantile(0.5) < 50_000_000);
-
-        let h = &mut hs.get_mut("slow").unwrap();
-        h.refresh();
-        // ~= 100ms
-        assert!(h.value_at_quantile(0.5) > 20_000_000);
-        assert!(h.value_at_quantile(0.5) < 500_000_000);
+        assert!(hs.contains_key("fast"));
+        assert!(hs.contains_key("slow"));
     })
 }
 
@@ -132,6 +121,47 @@ fn by_field() {
         assert_eq!(hs.len(), 2);
         assert!(hs.contains_key("event1"));
         assert!(hs.contains_key("event2"));
+    })
+}
+
+#[test]
+fn samples() {
+    let s = Builder::default().build(|| Histogram::new_with_max(1_000_000, 1).unwrap());
+    let sid = s.downcaster();
+    let d = Dispatch::new(s);
+    let d2 = d.clone();
+    let n = 100;
+    std::thread::spawn(move || {
+        dispatcher::with_default(&d2, || {
+            for _ in 0..n {
+                trace_span!("foo").in_scope(|| {
+                    std::thread::sleep(std::time::Duration::from_micros(100));
+                    trace!("fast");
+                    std::thread::sleep(std::time::Duration::from_micros(500));
+                    trace!("slow");
+                })
+            }
+        })
+    })
+    .join()
+    .unwrap();
+    sid.downcast(&d).unwrap().force_synchronize();
+    sid.downcast(&d).unwrap().with_histograms(|hs| {
+        assert_eq!(hs.len(), 1);
+        let hs = &mut hs.get_mut("foo").unwrap();
+        assert_eq!(hs.len(), 2);
+
+        let h = &mut hs.get_mut("fast").unwrap();
+        // ~= 100µs
+        assert_eq!(h.len(), n);
+        assert!(h.value_at_quantile(0.5) > 20_000);
+        assert!(h.value_at_quantile(0.5) < 500_000);
+
+        let h = &mut hs.get_mut("slow").unwrap();
+        // ~= 500µs
+        assert_eq!(h.len(), n);
+        assert!(h.value_at_quantile(0.5) > 10_000);
+        assert!(h.value_at_quantile(0.5) < 2_500_000);
     })
 }
 
