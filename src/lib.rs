@@ -6,7 +6,7 @@
 //! ```rust
 //! use tracing::*;
 //! use tracing_timing::{Builder, Histogram};
-//! let subscriber = Builder::from(|| Histogram::new_with_max(1_000_000, 2).unwrap()).build();
+//! let subscriber = Builder::default().build(|| Histogram::new_with_max(1_000_000, 2).unwrap());
 //! let dispatcher = Dispatch::new(subscriber);
 //! dispatcher::with_default(&dispatcher, || {
 //!     trace_span!("request").in_scope(|| {
@@ -69,7 +69,7 @@
 //! ```rust
 //! use tracing::*;
 //! use tracing_timing::{Builder, Histogram, TimingSubscriber};
-//! let subscriber = Builder::from(|| Histogram::new_with_max(1_000_000, 2).unwrap()).build();
+//! let subscriber = Builder::default().build(|| Histogram::new_with_max(1_000_000, 2).unwrap());
 //! let dispatch = Dispatch::new(subscriber);
 //! // ...
 //! // code that hands off clones of the dispatch
@@ -197,7 +197,7 @@ struct WriterState<S, E> {
     // TODO:
     // placing this in a ShardedLock requires that it is Sync, but it's only ever used when you're
     // holding the write lock. not sure how to describe this in the type system.
-    new_histogram: Box<FnMut() -> Histogram<u64> + Send + Sync>,
+    new_histogram: Box<FnMut(&S, &E) -> Histogram<u64> + Send + Sync>,
 }
 
 struct ReaderState<S, E> {
@@ -306,7 +306,7 @@ where
             .unwrap()
             .entry(eid.clone())
             .or_insert_with(|| {
-                let h = (nh)().into_sync();
+                let h = (nh)(sid, &eid).into_sync();
                 let ir = h.recorder().into_idle();
                 created.send((sid.clone(), eid.clone(), h)).expect(
                     "a WriterState implies there's also a ReaderState, which holds the receiver",
@@ -471,7 +471,7 @@ where
     /// ```rust
     /// use tracing::*;
     /// use tracing_timing::{Builder, Histogram, TimingSubscriber};
-    /// let subscriber = Builder::from(|| Histogram::new_with_max(1_000_000, 2).unwrap()).build();
+    /// let subscriber = Builder::default().build(|| Histogram::new_with_max(1_000_000, 2).unwrap());
     /// let downcaster = subscriber.downcaster();
     /// let dispatch = Dispatch::new(subscriber);
     /// // ...

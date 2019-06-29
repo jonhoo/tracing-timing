@@ -3,7 +3,7 @@ use tracing::*;
 use tracing_timing::{Builder, Histogram};
 
 fn main() {
-    let s = Builder::from(|| Histogram::new_with_bounds(10_000, 1_000_000, 3).unwrap()).build();
+    let s = Builder::default().build(|| Histogram::new_with_bounds(10_000, 1_000_000, 3).unwrap());
     let sid = s.downcaster();
 
     let d = Dispatch::new(s);

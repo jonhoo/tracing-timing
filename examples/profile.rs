@@ -3,9 +3,9 @@ use tracing::*;
 use tracing_timing::{Builder, Histogram};
 
 fn main() {
-    let s = Builder::from(|| Histogram::new_with_max(1_000_000, 2).unwrap())
+    let s = Builder::default()
         .events(tracing_timing::group::ByName)
-        .build();
+        .build(|| Histogram::new_with_max(1_000_000, 2).unwrap());
     let sid = s.downcaster();
 
     let d = Dispatch::new(s);

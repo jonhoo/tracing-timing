@@ -4,10 +4,10 @@ use tracing_timing::*;
 // NOTE: leave this test first! it'll break if it moves
 #[test]
 fn by_name() {
-    let s = Builder::from(|| Histogram::new_with_max(200_000_000, 1).unwrap())
+    let s = Builder::default()
         .spans(group::ByName)
         .events(group::ByName)
-        .build();
+        .build(|| Histogram::new_with_max(200_000_000, 1).unwrap());
     let sid = s.downcaster();
     let d = Dispatch::new(s);
     let d2 = d.clone();
@@ -33,10 +33,7 @@ fn by_name() {
 
 #[test]
 fn downcaster() {
-    let s = Builder::from(|| Histogram::new_with_max(200_000_000, 1).unwrap())
-        .spans(group::ByName)
-        .events(group::ByName)
-        .build();
+    let s = Builder::default().build(|| Histogram::new_with_max(200_000_000, 1).unwrap());
     let sid = s.downcaster();
     let sid2 = sid.clone();
     let d = Dispatch::new(s);
@@ -50,10 +47,10 @@ fn downcaster() {
 
 #[test]
 fn by_target() {
-    let s = Builder::from(|| Histogram::new_with_max(200_000_000, 1).unwrap())
+    let s = Builder::default()
         .spans(group::ByTarget)
         .events(group::ByTarget)
-        .build();
+        .build(|| Histogram::new_with_max(200_000_000, 1).unwrap());
     let sid = s.downcaster();
     let d = Dispatch::new(s);
     let d2 = d.clone();
@@ -76,7 +73,7 @@ fn by_target() {
 
 #[test]
 fn by_default() {
-    let s = Builder::from(|| Histogram::new_with_max(200_000_000, 1).unwrap()).build();
+    let s = Builder::default().build(|| Histogram::new_with_max(200_000_000, 1).unwrap());
     let sid = s.downcaster();
     let d = Dispatch::new(s);
     let d2 = d.clone();
@@ -112,10 +109,10 @@ fn by_default() {
 
 #[test]
 fn by_field() {
-    let s = Builder::from(|| Histogram::new_with_max(200_000_000, 1).unwrap())
+    let s = Builder::default()
         .spans(group::ByField::from("sf"))
         .events(group::ByField::from("ef"))
-        .build();
+        .build(|| Histogram::new_with_max(200_000_000, 1).unwrap());
     let sid = s.downcaster();
     let d = Dispatch::new(s);
     let d2 = d.clone();
@@ -140,7 +137,7 @@ fn by_field() {
 
 #[test]
 fn dupe_span() {
-    let s = Builder::from(|| Histogram::new_with_max(200_000_000, 1).unwrap()).build();
+    let s = Builder::default().build(|| Histogram::new_with_max(200_000_000, 1).unwrap());
     let sid = s.downcaster();
     let d = Dispatch::new(s);
     let span = dispatcher::with_default(&d, || trace_span!("foo"));
@@ -176,7 +173,7 @@ fn dupe_span() {
 
 #[test]
 fn same_event_two_threads() {
-    let s = Builder::from(|| Histogram::new_with_max(200_000_000, 1).unwrap()).build();
+    let s = Builder::default().build(|| Histogram::new_with_max(200_000_000, 1).unwrap());
     let sid = s.downcaster();
     let d = Dispatch::new(s);
     let d1 = d.clone();
@@ -210,9 +207,9 @@ fn same_event_two_threads() {
 
 #[test]
 fn by_field_typed() {
-    let s = Builder::from(|| Histogram::new_with_max(200_000_000, 1).unwrap())
+    let s = Builder::default()
         .events(group::ByField::from("f"))
-        .build();
+        .build(|| Histogram::new_with_max(200_000_000, 1).unwrap());
     let sid = s.downcaster();
     let d = Dispatch::new(s);
     let d2 = d.clone();
@@ -234,5 +231,32 @@ fn by_field_typed() {
         assert!(hs.contains_key("1"));
         assert!(hs.contains_key("true"));
         assert!(hs.contains_key("-1"));
+    })
+}
+
+#[test]
+fn informed_histogram_constructor() {
+    let s = Builder::default().build_informed(|s: &_, e: &_| {
+        assert_eq!(*s, "span");
+        assert_eq!(e, "event");
+        Histogram::new_with_max(200_000_000, 1).unwrap()
+    });
+    let sid = s.downcaster();
+    let d = Dispatch::new(s);
+    let d2 = d.clone();
+    std::thread::spawn(move || {
+        dispatcher::with_default(&d2, || {
+            trace_span!("span").in_scope(|| {
+                trace!("event");
+            })
+        })
+    })
+    .join()
+    .unwrap();
+    sid.downcast(&d).unwrap().with_histograms(|hs| {
+        assert_eq!(hs.len(), 1);
+        let hs = &mut hs.get_mut("span").unwrap();
+        assert_eq!(hs.len(), 1);
+        assert!(hs.contains_key("event"));
     })
 }
