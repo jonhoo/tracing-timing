@@ -183,7 +183,8 @@ fn same_event_two_threads() {
     let jh1 = std::thread::spawn(move || {
         dispatcher::with_default(&d1, || {
             trace_span!("span").in_scope(|| {
-                trace!("event");
+                trace!("event1");
+                trace!("event2");
             })
         })
     });
@@ -191,7 +192,8 @@ fn same_event_two_threads() {
     let jh2 = std::thread::spawn(move || {
         dispatcher::with_default(&d2, || {
             trace_span!("span").in_scope(|| {
-                trace!("event");
+                trace!("event1");
+                trace!("event2");
             })
         })
     });
@@ -200,8 +202,9 @@ fn same_event_two_threads() {
     sid.downcast(&d).unwrap().with_histograms(|hs| {
         assert_eq!(hs.len(), 1);
         let hs = &mut hs.get_mut("span").unwrap();
-        assert_eq!(hs.len(), 1);
-        assert!(hs.contains_key("event"));
+        assert_eq!(hs.len(), 2);
+        assert!(hs.contains_key("event1"));
+        assert!(hs.contains_key("event2"));
     })
 }
 
