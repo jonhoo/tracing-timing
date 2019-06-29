@@ -82,14 +82,14 @@ fn by_default() {
         let h = &mut hs.get_mut("fast").unwrap();
         h.refresh();
         // ~= 10ms
-        assert!(h.value_at_quantile(0.5) > 1_000_000);
-        assert!(h.value_at_quantile(0.5) < 20_000_000);
+        assert!(h.value_at_quantile(0.5) > 2_000_000);
+        assert!(h.value_at_quantile(0.5) < 50_000_000);
 
         let h = &mut hs.get_mut("slow").unwrap();
         h.refresh();
         // ~= 100ms
-        assert!(h.value_at_quantile(0.5) > 10_000_000);
-        assert!(h.value_at_quantile(0.5) < 200_000_000);
+        assert!(h.value_at_quantile(0.5) > 20_000_000);
+        assert!(h.value_at_quantile(0.5) < 500_000_000);
     })
 }
 
