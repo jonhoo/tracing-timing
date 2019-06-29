@@ -227,7 +227,7 @@ struct WriterState<S, E> {
     // TODO:
     // placing this in a ShardedLock requires that it is Sync, but it's only ever used when you're
     // holding the write lock. not sure how to describe this in the type system.
-    new_histogram: Box<FnMut(&S, &E) -> Histogram<u64> + Send + Sync>,
+    new_histogram: Box<dyn FnMut(&S, &E) -> Histogram<u64> + Send + Sync>,
 }
 
 struct ReaderState<S, E> {
