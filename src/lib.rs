@@ -504,7 +504,7 @@ where
 /// See [`TimingSubscriber::downcaster`].
 #[derive(Debug, Copy)]
 pub struct Downcaster<S, E> {
-    phantom: PhantomData<(S, E)>,
+    phantom: PhantomData<fn(S, E)>,
 }
 
 impl<S, E> Clone for Downcaster<S, E> {
