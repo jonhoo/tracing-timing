@@ -317,3 +317,156 @@ fn by_closure() {
         assert!(hs.contains_key(&()));
     })
 }
+
+#[test]
+fn nested() {
+    let s = Builder::default().build(|| Histogram::new_with_max(200_000_000, 1).unwrap());
+    let sid = s.downcaster();
+    let d = Dispatch::new(s);
+    let d2 = d.clone();
+    std::thread::spawn(move || {
+        dispatcher::with_default(&d2, || {
+            trace_span!("foo").in_scope(|| {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+                trace_span!("bar").in_scope(|| {
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                    trace_span!("baz").in_scope(|| {
+                        std::thread::sleep(std::time::Duration::from_millis(1));
+                        trace!("event1");
+                        std::thread::sleep(std::time::Duration::from_millis(1));
+                        trace!("event2");
+                    })
+                })
+            })
+        })
+    })
+    .join()
+    .unwrap();
+    sid.downcast(&d).unwrap().force_synchronize();
+    sid.downcast(&d).unwrap().with_histograms(|hs| {
+        assert_eq!(hs.len(), 3);
+        for &s in &["baz", "bar", "foo"] {
+            assert!(hs.contains_key(s));
+            assert!(hs[s].contains_key("event1"));
+            assert!(hs[s].contains_key("event2"));
+            assert_eq!(hs[s].len(), 2);
+            for &e in &["event1", "event2"] {
+                assert_eq!(hs[s][e].len(), 1);
+            }
+        }
+
+        // timing should differ between the different spans for event1
+        // since it is measured relative to span start time
+        let foo_e1 = &hs["foo"]["event1"].max();
+        let bar_e1 = &hs["bar"]["event1"].max();
+        let baz_e1 = &hs["baz"]["event1"].max();
+        assert!(foo_e1 > bar_e1);
+        assert!(bar_e1 > baz_e1);
+        // for event2 however, they should all be relative to event1
+        let foo_e2 = &hs["foo"]["event2"].max();
+        let bar_e2 = &hs["bar"]["event2"].max();
+        let baz_e2 = &hs["baz"]["event2"].max();
+        assert_eq!(foo_e2, bar_e2);
+        assert_eq!(foo_e2, baz_e2);
+    })
+}
+
+#[test]
+fn nested_diff() {
+    let s = Builder::default().build(|| Histogram::new_with_max(200_000_000, 1).unwrap());
+    let sid = s.downcaster();
+    let d = Dispatch::new(s);
+    let d2 = d.clone();
+    std::thread::spawn(move || {
+        dispatcher::with_default(&d2, || {
+            trace_span!("foo").in_scope(|| {
+                trace!("foo_event");
+                std::thread::sleep(std::time::Duration::from_millis(1));
+                trace_span!("bar").in_scope(|| {
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                    trace!("bar_event");
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                    trace_span!("baz").in_scope(|| {
+                        std::thread::sleep(std::time::Duration::from_millis(1));
+                        trace!("baz_event");
+                    })
+                })
+            })
+        })
+    })
+    .join()
+    .unwrap();
+    sid.downcast(&d).unwrap().force_synchronize();
+    sid.downcast(&d).unwrap().with_histograms(|hs| {
+        assert_eq!(hs.len(), 3);
+        assert!(hs.contains_key("foo"));
+        assert!(hs.contains_key("bar"));
+        assert!(hs.contains_key("baz"));
+
+        // all spans see baz_event
+        assert!(hs["foo"].contains_key("baz_event"));
+        assert!(hs["bar"].contains_key("baz_event"));
+        assert!(hs["baz"].contains_key("baz_event"));
+        // baz does not see any the other events, but the others do
+        assert!(hs["foo"].contains_key("bar_event"));
+        assert!(hs["bar"].contains_key("bar_event"));
+        assert_eq!(hs["baz"].len(), 1);
+        // bar does not see foo_event, but foo does
+        assert!(hs["foo"].contains_key("foo_event"));
+        assert_eq!(hs["bar"].len(), 2);
+        // foo doesn't somehow see any other events
+        assert_eq!(hs["foo"].len(), 3);
+
+        // in foo, bar_event should be measured relative to foo_event
+        // in bar, bar_event should be measured relative to the start of bar
+        // therefore, bar should see a lower time for bar_event than foo should
+        let foo_bar_e = &hs["foo"]["bar_event"].max();
+        let bar_bar_e = &hs["bar"]["bar_event"].max();
+        assert!(foo_bar_e > bar_bar_e);
+
+        // in both foo and bar, baz_event should be measured relative to bar_event
+        // in baz, baz_event should be measured relative to the start of baz
+        // therefore, baz should see a lower time for baz_event than foo or bar
+        // and foo and bar should see the _same_ time
+        let foo_baz_e = &hs["foo"]["baz_event"].max();
+        let bar_baz_e = &hs["bar"]["baz_event"].max();
+        let baz_baz_e = &hs["baz"]["baz_event"].max();
+        assert_eq!(foo_baz_e, bar_baz_e);
+        assert!(foo_baz_e > baz_baz_e);
+    })
+}
+
+#[test]
+fn explicit_parent() {
+    let s = Builder::default().build(|| Histogram::new_with_max(200_000_000, 1).unwrap());
+    let sid = s.downcaster();
+    let d = Dispatch::new(s);
+    let d2 = d.clone();
+    std::thread::spawn(move || {
+        dispatcher::with_default(&d2, || {
+            let s1 = trace_span!("foo");
+            std::thread::sleep(std::time::Duration::from_millis(1));
+            trace_span!(parent: &s1, "bar").in_scope(|| {
+                trace!("event");
+            })
+        })
+    })
+    .join()
+    .unwrap();
+    sid.downcast(&d).unwrap().force_synchronize();
+    sid.downcast(&d).unwrap().with_histograms(|hs| {
+        assert_eq!(hs.len(), 2);
+        for &s in &["bar", "foo"] {
+            assert!(hs.contains_key(s));
+            assert!(hs[s].contains_key("event"));
+            assert_eq!(hs[s].len(), 1);
+            assert_eq!(hs[s]["event"].len(), 1);
+        }
+
+        // timing should differ between the different spans for event
+        // since it is measured relative to span start time
+        let foo_e = &hs["foo"]["event"].max();
+        let bar_e = &hs["bar"]["event"].max();
+        assert!(foo_e > bar_e);
+    })
+}

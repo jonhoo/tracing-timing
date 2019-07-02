@@ -107,6 +107,15 @@
 //! metrics across a limited window of time. You can do this by clearing the histogram in
 //! [`TimingSubscriber::with_histograms`] before refreshing them, or periodically as you see fit.
 //!
+//! # Usage notes:
+//!
+//! **Event timing is _per span_, not per span _per thread_.** This means that if you emit events
+//! for the same span concurrently from multiple threads, you may see weird timing information.
+//!
+//! **Span creation takes a lock.** This means that you will generally want to avoid creating
+//! extraneous spans. One technique that works well here is subsampling your application, for
+//! example by only creating tracking spans for _some_ of your requests.
+//!
 //!   [high dynamic range histograms]: https://hdrhistogram.github.io/HdrHistogram/
 //!   [`hdrhistogram`]: https://docs.rs/hdrhistogram/
 //!   [`quanta`]: https://docs.rs/quanta/
@@ -131,7 +140,7 @@ type HashMap<K, V> = std::collections::HashMap<K, V, fxhash::FxBuildHasher>;
 static TID: atomic::AtomicUsize = atomic::AtomicUsize::new(0);
 
 thread_local! {
-    static SPAN: RefCell<Option<span::Id>> = RefCell::new(None);
+    static SPAN: RefCell<Vec<span::Id>> = RefCell::new(Vec::new());
     static MYTID: RefCell<Option<usize>> = RefCell::new(None);
 }
 
@@ -140,6 +149,13 @@ pub use builder::Builder;
 pub use hdrhistogram::Histogram;
 
 pub mod group;
+
+#[derive(Debug, Clone)]
+struct SpanGroupIdent<S> {
+    group: S,
+    parent: Option<span::Id>,
+    follows: Option<span::Id>,
+}
 
 type Map<S, E, T> = HashMap<S, HashMap<E, T>>;
 
@@ -211,7 +227,7 @@ struct WriterState<S, E> {
     refcount: Slab<atomic::AtomicUsize>,
 
     // note that many span::Ids can map to the same S
-    spans: Slab<S>,
+    spans: Slab<SpanGroupIdent<S>>,
 
     // TID => (S + callsite) => E => thread-local Recorder
     tls: ThreadLocal<Map<S, E, Recorder<u64>>>,
@@ -266,19 +282,20 @@ where
 {
     fn time(&self, span: &span::Id, event: &Event) {
         let now = self.time.now();
+        let mut span = span.clone();
         let inner = self.writers.read().unwrap();
-        let previous =
-            inner.last_event[span_id_to_slab_idx(span)].swap(now, atomic::Ordering::AcqRel);
-        if previous > now {
-            // someone else recorded a sample _just_ now
-            // the delta is effectively zero, but recording a 0 sample is misleading
-            return;
-        }
 
-        let time = now - previous;
-
-        // time to record a sample!
-        let f = move |r: &mut Recorder<u64>| r.saturating_record(time);
+        let record =
+            move |last_event: &Slab<atomic::AtomicU64>, r: &mut Recorder<u64>, span: &span::Id| {
+                let previous =
+                    last_event[span_id_to_slab_idx(span)].swap(now, atomic::Ordering::AcqRel);
+                if previous > now {
+                    // someone else recorded a sample _just_ now
+                    // the delta is effectively zero, but recording a 0 sample is misleading
+                    return;
+                }
+                r.saturating_record(now - previous)
+            };
 
         // who are we?
         let tid = ThreadId::default();
@@ -286,36 +303,47 @@ where
         // fast path: sid/eid pair is known to this thread
         let eid = self.event_group.group(event);
         if let Some(ref tls) = inner.tls.get(&tid) {
-            let sid = &inner.spans[span_id_to_slab_idx(span)];
-
             // we know no-one else has our TID:
             // NOTE: it's _not_ safe to use this after we drop the lock due to force_synchronize.
             let tls = unsafe { &mut *tls.get() };
 
-            // the span id _must_ be known, as it's added when created
-            if let Some(ref mut recorder) = tls.get_mut(&sid).and_then(|rs| rs.get_mut(&eid)) {
-                // sid/eid already known and we already have a thread-local recorder!
-                f(recorder);
-                return;
-            } else if let Some(ref ir) = inner.idle_recorders[&sid].get(&eid) {
-                // we didn't know about the eid, but if there's already a recorder for it,
-                // we can just create a local recorder from it and move on
-                let mut recorder = ir.recorder();
-                f(&mut recorder);
-                let r = tls
-                    .entry(sid.clone())
-                    .or_insert_with(Default::default)
-                    .insert(eid, recorder);
-                assert!(r.is_none());
-                return;
-            } else {
-                // we're the first thread to see this pair, so we need to make a histogram for it
+            loop {
+                // the span id _must_ be known, as it's added when created
+                let sgi = &inner.spans[span_id_to_slab_idx(&span)];
+                if let Some(ref mut recorder) =
+                    tls.get_mut(&sgi.group).and_then(|rs| rs.get_mut(&eid))
+                {
+                    // sid/eid already known and we already have a thread-local recorder!
+                    record(&inner.last_event, recorder, &span);
+                } else if let Some(ref ir) = inner.idle_recorders[&sgi.group].get(&eid) {
+                    // we didn't know about the eid, but if there's already a recorder for it,
+                    // we can just create a local recorder from it and move on
+                    let mut recorder = ir.recorder();
+                    record(&inner.last_event, &mut recorder, &span);
+                    let r = tls
+                        .entry(sgi.group.clone())
+                        .or_insert_with(Default::default)
+                        .insert(eid.clone(), recorder);
+                    assert!(r.is_none());
+                } else {
+                    // we're the first thread to see this pair, so we need to make a histogram for it
+                    break;
+                }
+
+                if let Some(ref psi) = sgi.parent {
+                    // keep recording up the stack
+                    span = psi.clone();
+                } else {
+                    return;
+                }
             }
+
+        // at least one sid/eid pair was unknown
         } else {
             // this thread does not yet have TLS -- we'll have to take the lock
         }
 
-        // slow path: either this thread is new, or the sid/eid pair was new
+        // slow path: either this thread is new, or a sid/eid pair was new
         // in either case, we need to take the write lock
         // to do that, we must first drop the read lock
         drop(inner);
@@ -328,33 +356,45 @@ where
         let tls = unsafe { &mut *tls.get() };
 
         // use an existing recorder if one exists, or make a new histogram if one does not
-        let sid = &inner.spans[span_id_to_slab_idx(span)];
         let nh = &mut inner.new_histogram;
         let created = &mut inner.created;
-        let ir = inner
-            .idle_recorders
-            .get_mut(&inner.spans[span_id_to_slab_idx(span)])
-            .unwrap()
-            .entry(eid.clone())
-            .or_insert_with(|| {
-                let h = (nh)(sid, &eid).into_sync();
-                let ir = h.recorder().into_idle();
-                created.send((sid.clone(), eid.clone(), h)).expect(
-                    "a WriterState implies there's also a ReaderState, which holds the receiver",
-                );
-                ir
-            });
+        let idle = &mut inner.idle_recorders;
+        loop {
+            let sgi = &inner.spans[span_id_to_slab_idx(&span)];
 
-        // finally, get us a thread-local recorder
-        let mut recorder = ir.recorder();
-        f(&mut recorder);
+            // since we're recursing up the tree, we _may_ find that we already have a recorder for
+            // a _later_ span's sid/eid. make sure we don't create a new one in that case!
+            let recorder = tls
+                .entry(sgi.group.clone())
+                .or_insert_with(Default::default)
+                .entry(eid.clone())
+                .or_insert_with(|| {
+                    // nope, get us a thread-local recorder
+                    idle.get_mut(&sgi.group)
+                        .unwrap()
+                        .entry(eid.clone())
+                        .or_insert_with(|| {
+                            // no histogram exists! make one.
+                            let h = (nh)(&sgi.group, &eid).into_sync();
+                            let ir = h.recorder().into_idle();
+                            created.send((sgi.group.clone(), eid.clone(), h)).expect(
+                                "WriterState implies ReaderState, which holds the receiver",
+                            );
+                            ir
+                        })
+                        .recorder()
+                });
 
-        // and stash it away for next time
-        let r = tls
-            .entry(sid.clone())
-            .or_insert_with(Default::default)
-            .insert(eid, recorder);
-        assert!(r.is_none());
+            // finally, we can record the sample
+            record(&inner.last_event, recorder, &span);
+
+            // recurse to parent if any
+            if let Some(ref psi) = sgi.parent {
+                span = psi.clone();
+            } else {
+                break;
+            }
+        }
     }
 
     /// Force all current timing information to be refreshed immediately.
@@ -422,18 +462,29 @@ where
     E::Id: Clone + Hash + Eq + 'static,
 {
     fn enabled(&self, _: &Metadata) -> bool {
+        // TODO: implement support for per-group subsampling
         true
     }
 
     fn new_span(&self, span: &span::Attributes) -> span::Id {
+        let group = self.span_group.group(span);
+        let parent = span
+            .parent()
+            .cloned()
+            .or_else(|| SPAN.with(|current_span| current_span.borrow().last().map(|i| i.clone())));
+        let sg = SpanGroupIdent {
+            group,
+            parent,
+            follows: None,
+        };
+
         let mut inner = self.writers.write().unwrap();
         let id = inner.refcount.insert(atomic::AtomicUsize::new(1));
-        let sg = self.span_group.group(span);
         let id2 = inner.spans.insert(sg.clone());
         assert_eq!(id, id2);
         inner
             .idle_recorders
-            .entry(sg)
+            .entry(sg.group)
             .or_insert_with(HashMap::default);
         let id2 = inner
             .last_event
@@ -444,12 +495,19 @@ where
 
     fn record(&self, _: &span::Id, _: &span::Record) {}
 
-    fn record_follows_from(&self, _: &span::Id, _: &span::Id) {}
+    fn record_follows_from(&self, span: &span::Id, follows: &span::Id) {
+        let mut inner = self.writers.write().unwrap();
+        inner
+            .spans
+            .get_mut(span_id_to_slab_idx(span))
+            .unwrap()
+            .follows = Some(follows.clone());
+    }
 
     fn event(&self, event: &Event) {
         SPAN.with(|current_span| {
             let current_span = current_span.borrow();
-            if let Some(ref span) = *current_span {
+            if let Some(ref span) = current_span.last() {
                 self.time(span, event);
             } else {
                 // recorded free-standing event -- ignoring
@@ -459,22 +517,21 @@ where
 
     fn enter(&self, span: &span::Id) {
         SPAN.with(|current_span| {
-            let mut current_span = current_span.borrow_mut();
-            if let Some(_cs) = current_span.take() {
-                // we entered a span while already in a span
-                // let's just keep the inner span
-                // TODO: make this configurable or something?
-            }
-            *current_span = Some(span.clone());
+            current_span.borrow_mut().push(span.clone());
         })
     }
 
     fn exit(&self, span: &span::Id) {
+        // we are guaranteed that one any given thread, spans are exited in reverse order
         SPAN.with(|current_span| {
-            let mut current_span = current_span.borrow_mut();
-            if let Some(cs) = current_span.take() {
-                assert_eq!(&cs, span);
-            }
+            let leaving = current_span
+                .borrow_mut()
+                .pop()
+                .expect("told to exit span when not in span");
+            assert_eq!(
+                &leaving, span,
+                "told to exit span that was not most recently entered"
+            );
         })
     }
 
