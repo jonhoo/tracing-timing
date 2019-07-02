@@ -127,6 +127,7 @@
 use crossbeam::channel;
 use crossbeam::sync::ShardedLock;
 use hdrhistogram::{sync::Recorder, SyncHistogram};
+use indexmap::IndexMap;
 use slab::Slab;
 use std::cell::{RefCell, UnsafeCell};
 use std::hash::Hash;
@@ -135,7 +136,11 @@ use std::ops::{Deref, DerefMut};
 use std::sync::{atomic, Mutex};
 use tracing_core::*;
 
-type HashMap<K, V> = std::collections::HashMap<K, V, fxhash::FxBuildHasher>;
+/// A faster hasher for `tracing-timing` maps.
+pub type Hasher = fxhash::FxBuildHasher;
+
+/// A standard library `HashMap` with a faster hasher.
+pub type HashMap<K, V> = std::collections::HashMap<K, V, Hasher>;
 
 static TID: atomic::AtomicUsize = atomic::AtomicUsize::new(0);
 
@@ -248,7 +253,7 @@ struct WriterState<S, E> {
 
 struct ReaderState<S, E> {
     created: channel::Receiver<(S, E, SyncHistogram<u64>)>,
-    histograms: HashMap<S, HashMap<E, SyncHistogram<u64>>>,
+    histograms: HashMap<S, IndexMap<E, SyncHistogram<u64>, Hasher>>,
 }
 
 /// Timing-gathering tracing subscriber.
@@ -435,7 +440,7 @@ where
     ///   [`hdrhistogram` documentation]: https://docs.rs/hdrhistogram/
     pub fn with_histograms<F, R>(&self, f: F) -> R
     where
-        F: FnOnce(&mut HashMap<S::Id, HashMap<E::Id, SyncHistogram<u64>>>) -> R,
+        F: FnOnce(&mut HashMap<S::Id, IndexMap<E::Id, SyncHistogram<u64>, Hasher>>) -> R,
     {
         // writers never take this lock, so we don't hold them up should the user call refresh(),
         let mut reader = self.reader.lock().unwrap();
@@ -443,7 +448,7 @@ where
             let h = reader
                 .histograms
                 .entry(sid)
-                .or_insert_with(HashMap::default)
+                .or_insert_with(IndexMap::default)
                 .insert(eid, h);
             assert!(
                 h.is_none(),

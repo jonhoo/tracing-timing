@@ -125,6 +125,32 @@ fn by_field() {
 }
 
 #[test]
+fn event_order() {
+    let s = Builder::default().build(|| Histogram::new_with_max(200_000_000, 1).unwrap());
+    let sid = s.downcaster();
+    let d = Dispatch::new(s);
+    let d2 = d.clone();
+    std::thread::spawn(move || {
+        dispatcher::with_default(&d2, || {
+            trace_span!("span").in_scope(|| {
+                trace!("first");
+                trace!("second");
+            })
+        })
+    })
+    .join()
+    .unwrap();
+    sid.downcast(&d).unwrap().with_histograms(|hs| {
+        assert_eq!(hs.len(), 1);
+        let hs = &hs["span"];
+        let mut it = hs.keys();
+        assert_eq!(it.next().map(|s| &**s), Some("first"));
+        assert_eq!(it.next().map(|s| &**s), Some("second"));
+        assert_eq!(it.next(), None);
+    })
+}
+
+#[test]
 fn samples() {
     let s = Builder::default().build(|| Histogram::new_with_max(1_000_000, 1).unwrap());
     let sid = s.downcaster();

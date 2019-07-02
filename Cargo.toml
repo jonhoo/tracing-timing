@@ -1,6 +1,6 @@
 [package]
 name = "tracing-timing"
-version = "0.2.2"
+version = "0.2.3"
 edition = "2018"
 authors = ["Jon Gjengset <jon@thesquareplanet.com>"]
 
@@ -26,6 +26,7 @@ slab = "0.4"
 quanta = "0.3"
 fxhash = "0.2"
 crossbeam = "0.7"
+indexmap = "1.0"
 
 [dev-dependencies]
 tracing = "0.1"
