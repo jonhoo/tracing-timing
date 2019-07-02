@@ -22,7 +22,7 @@ fn by_name() {
     .unwrap();
     sid.downcast(&d).unwrap().with_histograms(|hs| {
         assert_eq!(hs.len(), 1);
-        let hs = &mut hs.get_mut("foo").unwrap();
+        let hs = &hs["foo"];
         assert_eq!(hs.len(), 1);
         #[cfg(windows)]
         assert!(hs.contains_key("event tests\\lib.rs:17"));
@@ -65,7 +65,7 @@ fn by_target() {
     .unwrap();
     sid.downcast(&d).unwrap().with_histograms(|hs| {
         assert_eq!(hs.len(), 1);
-        let hs = &mut hs.get_mut("lib").unwrap();
+        let hs = &hs["lib"];
         assert_eq!(hs.len(), 1);
         assert!(hs.contains_key("e"));
     })
@@ -89,7 +89,7 @@ fn by_default() {
     .unwrap();
     sid.downcast(&d).unwrap().with_histograms(|hs| {
         assert_eq!(hs.len(), 1);
-        let hs = &mut hs.get_mut("foo").unwrap();
+        let hs = &hs["foo"];
         assert_eq!(hs.len(), 2);
         assert!(hs.contains_key("fast"));
         assert!(hs.contains_key("slow"));
@@ -117,7 +117,7 @@ fn by_field() {
     .unwrap();
     sid.downcast(&d).unwrap().with_histograms(|hs| {
         assert_eq!(hs.len(), 1);
-        let hs = &mut hs.get_mut("span").unwrap();
+        let hs = &hs["span"];
         assert_eq!(hs.len(), 2);
         assert!(hs.contains_key("event1"));
         assert!(hs.contains_key("event2"));
@@ -148,16 +148,16 @@ fn samples() {
     sid.downcast(&d).unwrap().force_synchronize();
     sid.downcast(&d).unwrap().with_histograms(|hs| {
         assert_eq!(hs.len(), 1);
-        let hs = &mut hs.get_mut("foo").unwrap();
+        let hs = &hs["foo"];
         assert_eq!(hs.len(), 2);
 
-        let h = &mut hs.get_mut("fast").unwrap();
+        let h = &hs["fast"];
         // ~= 100µs
         assert_eq!(h.len(), n);
         assert!(h.value_at_quantile(0.5) > 200_000);
         assert!(h.value_at_quantile(0.5) < 5_000_000);
 
-        let h = &mut hs.get_mut("slow").unwrap();
+        let h = &hs["slow"];
         // ~= 500µs
         assert_eq!(h.len(), n);
         assert!(h.value_at_quantile(0.5) > 1_000_000);
@@ -194,7 +194,7 @@ fn dupe_span() {
     jh2.join().unwrap();
     sid.downcast(&d).unwrap().with_histograms(|hs| {
         assert_eq!(hs.len(), 1);
-        let hs = &mut hs.get_mut("foo").unwrap();
+        let hs = &hs["foo"];
         assert_eq!(hs.len(), 2);
         assert!(hs.contains_key("thread1"));
         assert!(hs.contains_key("thread2"));
@@ -228,7 +228,7 @@ fn same_event_two_threads() {
     jh2.join().unwrap();
     sid.downcast(&d).unwrap().with_histograms(|hs| {
         assert_eq!(hs.len(), 1);
-        let hs = &mut hs.get_mut("span").unwrap();
+        let hs = &hs["span"];
         assert_eq!(hs.len(), 2);
         assert!(hs.contains_key("event1"));
         assert!(hs.contains_key("event2"));
@@ -256,7 +256,7 @@ fn by_field_typed() {
     .unwrap();
     sid.downcast(&d).unwrap().with_histograms(|hs| {
         assert_eq!(hs.len(), 1);
-        let hs = &mut hs.get_mut("foo").unwrap();
+        let hs = &hs["foo"];
         assert_eq!(hs.len(), 3);
         assert!(hs.contains_key("1"));
         assert!(hs.contains_key("true"));
@@ -285,7 +285,7 @@ fn informed_histogram_constructor() {
     .unwrap();
     sid.downcast(&d).unwrap().with_histograms(|hs| {
         assert_eq!(hs.len(), 1);
-        let hs = &mut hs.get_mut("span").unwrap();
+        let hs = &hs["span"];
         assert_eq!(hs.len(), 1);
         assert!(hs.contains_key("event"));
     })
@@ -312,7 +312,7 @@ fn by_closure() {
     .unwrap();
     sid.downcast(&d).unwrap().with_histograms(|hs| {
         assert_eq!(hs.len(), 1);
-        let hs = &mut hs.get_mut(&()).unwrap();
+        let hs = &hs[&()];
         assert_eq!(hs.len(), 1);
         assert!(hs.contains_key(&()));
     })
