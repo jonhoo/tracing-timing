@@ -471,7 +471,7 @@ where
         let parent = span
             .parent()
             .cloned()
-            .or_else(|| SPAN.with(|current_span| current_span.borrow().last().map(|i| i.clone())));
+            .or_else(|| SPAN.with(|current_span| current_span.borrow().last().cloned()));
         let sg = SpanGroupIdent {
             group,
             parent,
