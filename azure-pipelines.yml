@@ -1,0 +1,78 @@
+# https://docs.microsoft.com/en-us/azure/devops/pipelines/yaml-schema?view=azure-devops&tabs=schema
+stages:
+ - stage: check
+   displayName: Compilation check
+   jobs:
+     - template: ci/azure/cargo-check.yml
+       parameters:
+         name: cargo_check
+ - stage: test
+   displayName: Test suite
+   jobs:
+     # This represents the minimum Rust version supported.
+     # Tests are not run as tests may require newer versions of rust.
+     - template: ci/azure/cargo-check.yml
+       parameters:
+         name: minrust
+         rust_version: 1.34.0 # integer atomics
+     - template: ci/azure/test.yml
+       parameters:
+         name: cargo_test_stable
+         cross: true # also test on Windows and macOS
+     - template: ci/azure/test.yml
+       parameters:
+         name: cargo_test_beta
+         rust_version: beta
+     - template: ci/azure/test.yml
+       parameters:
+         name: cargo_test_nightly
+         rust_version: nightly
+ - stage: style
+   displayName: Style linting
+   dependsOn: check
+   jobs:
+     - template: ci/azure/rustfmt.yml
+       parameters:
+         name: rustfmt
+     - template: ci/azure/rustfmt.yml
+       parameters:
+         name: rustfmt_beta
+         rust: beta
+         allow_fail: true
+     - template: ci/azure/rustfmt.yml
+       parameters:
+         name: rustfmt_nightly
+         rust: nightly
+         allow_fail: true
+     - template: ci/azure/cargo-clippy.yml
+       parameters:
+         name: clippy
+         rust: stable
+     - template: ci/azure/cargo-clippy.yml
+       parameters:
+         name: clippy_beta
+         rust: beta
+         allow_fail: true
+     - template: ci/azure/cargo-clippy.yml
+       parameters:
+         name: clippy_nightly
+         rust: nightly
+         allow_fail: true
+ - stage: coverage
+   displayName: Code coverage
+   dependsOn: test
+   jobs:
+     - job: tarpaulin
+       displayName: tarpaulin
+       pool:
+         vmImage: ubuntu-16.04
+       steps:
+         - template: ci/azure/install-rust.yml
+         - script: cargo install cargo-tarpaulin
+           displayName: Install tarpaulin
+         - script: cargo tarpaulin --out Xml
+           displayName: Run tarpaulin
+         - script: bash <(curl -s https://codecov.io/bash)
+           displayName: Upload results to codecov
+           env:
+             CODECOV_TOKEN: $(CODECOV_TOKEN_SECRET)

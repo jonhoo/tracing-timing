@@ -1,6 +1,6 @@
 [![Crates.io](https://img.shields.io/crates/v/tracing-timing.svg)](https://crates.io/crates/tracing-timing)
 [![Documentation](https://docs.rs/tracing-timing/badge.svg)](https://docs.rs/tracing-timing/)
-[![Travis Build Status](https://travis-ci.com/jonhoo/tracing-timing.svg?branch=master)](https://travis-ci.com/jonhoo/tracing-timing)
+[![Build Status](https://dev.azure.com/jonhoo/tracing-timing/_apis/build/status/jonhoo.tracing-timing?branchName=master)](https://dev.azure.com/jonhoo/tracing-timing/_build/latest?definitionId=1&branchName=master)
 [![Cirrus CI Build Status](https://api.cirrus-ci.com/github/jonhoo/tracing-timing.svg)](https://cirrus-ci.com/github/jonhoo/tracing-timing)
 [![Codecov](https://codecov.io/github/jonhoo/tracing-timing/coverage.svg?branch=master)](https://codecov.io/gh/jonhoo/tracing-timing)
 [![Dependency status](https://deps.rs/repo/github/jonhoo/tracing-timing/status.svg)](https://deps.rs/repo/github/jonhoo/tracing-timing)
