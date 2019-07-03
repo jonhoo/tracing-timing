@@ -1,0 +1,23 @@
+parameters:
+  rust: stable
+
+jobs:
+- job: ${{ parameters.name }}
+  ${{ if eq(parameters.rust, 'stable') }}:
+    displayName: cargo check
+  ${{ if ne(parameters.rust, 'stable') }}:
+    displayName: cargo +${{ parameters.rust }} check
+  pool:
+    vmImage: ubuntu-16.04
+  steps:
+  - template: install-rust.yml
+  - script: cargo check --all --bins --examples --tests
+    displayName: Check compilation w/ default features
+  - script: cargo check --all --bins --examples --tests --no-default-features
+    displayName: Check compilation w/ no features
+  - script: cargo check --all --bins --examples --tests --all-features
+    displayName: Check compilation w/ all features
+
+  - ${{ if parameters.benches }}:
+    - script: cargo check --benches --all
+      displayName: Check benchmarks

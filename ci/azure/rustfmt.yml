@@ -1,0 +1,21 @@
+parameters:
+  rust: stable
+  allow_fail: false
+
+jobs:
+- job: ${{ parameters.name }}
+  ${{ if eq(parameters.rust, 'stable') }}:
+    displayName: cargo fmt
+  ${{ if ne(parameters.rust, 'stable') }}:
+    displayName: cargo +${{ parameters.rust }} fmt
+  continueOnError: ${{ parameters.allow_fail }}
+  pool:
+    vmImage: ubuntu-16.04
+  steps:
+    - template: install-rust.yml
+      parameters:
+        rust: ${{ parameters.rust }}
+        components:
+          - rustfmt
+    - script: cargo fmt --all -- --check
+      displayName: Check formatting

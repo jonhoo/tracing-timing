@@ -1,0 +1,29 @@
+parameters:
+  rust: stable
+  allow_fail: false
+
+jobs:
+- job: ${{ parameters.name }}
+  ${{ if eq(parameters.rust, 'stable') }}:
+    displayName: cargo test
+  ${{ if ne(parameters.rust, 'stable') }}:
+    displayName: cargo +${{ parameters.rust }} test
+  continueOnError: ${{ parameters.allow_fail }}
+  ${{ if parameters.cross }}:
+    strategy:
+      matrix:
+        Linux:
+          vmImage: ubuntu-16.04
+        MacOS:
+          vmImage: macOS-10.14
+        Windows:
+          vmImage: windows-2019
+  ${{ if not(parameters.cross) }}:
+    variables:
+      vmImage: ubuntu-16.04
+  pool:
+    vmImage: $(vmImage)
+  steps:
+  - template: install-rust.yml
+  - script: cargo test --all
+    displayName: Run tests
