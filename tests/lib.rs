@@ -463,7 +463,7 @@ fn nested_diff() {
 }
 
 #[test]
-fn explicit_parent() {
+fn explicit_span_parent() {
     let s = Builder::default().build(|| Histogram::new_with_max(200_000_000, 1).unwrap());
     let sid = s.downcaster();
     let d = Dispatch::new(s);
@@ -494,5 +494,27 @@ fn explicit_parent() {
         let foo_e = &hs["foo"]["event"].max();
         let bar_e = &hs["bar"]["event"].max();
         assert!(foo_e > bar_e);
+    })
+}
+
+#[test]
+fn explicit_event_parent() {
+    let s = Builder::default().build(|| Histogram::new_with_max(200_000_000, 1).unwrap());
+    let sid = s.downcaster();
+    let d = Dispatch::new(s);
+    let d2 = d.clone();
+    std::thread::spawn(move || {
+        dispatcher::with_default(&d2, || {
+            let span = trace_span!("foo");
+            trace!(parent: &span, "event");
+        })
+    })
+    .join()
+    .unwrap();
+    sid.downcast(&d).unwrap().with_histograms(|hs| {
+        assert_eq!(hs.len(), 1);
+        assert!(hs.contains_key("foo"));
+        assert!(hs["foo"].contains_key("event"));
+        assert_eq!(hs["foo"].len(), 1);
     })
 }

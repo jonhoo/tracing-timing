@@ -285,9 +285,8 @@ where
     S::Id: Clone + Hash + Eq,
     E::Id: Clone + Hash + Eq,
 {
-    fn time(&self, span: &span::Id, event: &Event) {
+    fn time(&self, mut span: span::Id, event: &Event) {
         let now = self.time.now();
-        let mut span = span.clone();
         let inner = self.writers.read().unwrap();
 
         let record =
@@ -510,14 +509,17 @@ where
     }
 
     fn event(&self, event: &Event) {
-        SPAN.with(|current_span| {
-            let current_span = current_span.borrow();
-            if let Some(ref span) = current_span.last() {
-                self.time(span, event);
-            } else {
-                // recorded free-standing event -- ignoring
-            }
-        })
+        let span = event.parent().cloned().or_else(|| {
+            SPAN.with(|current_span| {
+                let current_span = current_span.borrow();
+                current_span.last().cloned()
+            })
+        });
+        if let Some(span) = span {
+            self.time(span, event);
+        } else {
+            // recorded free-standing event -- ignoring
+        }
     }
 
     fn enter(&self, span: &span::Id) {
