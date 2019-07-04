@@ -69,8 +69,10 @@ stages:
          vmImage: ubuntu-16.04
        container:
          image: xd009642/tarpaulin:latest
-         options: --security-opt seccomp=unconfined -v "$(Build.SourcesDirectory):/volume" sh -c "cargo tarpaulin --out Xml"
+         options: --security-opt seccomp=unconfined -v "$(Build.SourcesDirectory):/volume"
        steps:
+         - script: cargo tarpaulin --out Xml
+           displayName: Run tarpaulin
          - script: bash <(curl -s https://codecov.io/bash)
            displayName: Upload results to codecov
            env:
