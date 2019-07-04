@@ -125,6 +125,45 @@ fn by_field() {
 }
 
 #[test]
+fn custom_time() {
+    let (time, mock) = quanta::Clock::mock();
+    let s = Builder::default()
+        .time(time)
+        .build(|| Histogram::new_with_bounds(1, 16, 3).unwrap());
+    let sid = s.downcaster();
+    let d = Dispatch::new(s);
+    let d2 = d.clone();
+    std::thread::spawn(move || {
+        dispatcher::with_default(&d2, || {
+            trace_span!("span").in_scope(|| {
+                mock.increment(1);
+                trace!("event1");
+                mock.increment(2);
+                trace!("event2");
+                mock.decrement(1);
+                trace!("event3");
+            })
+        })
+    })
+    .join()
+    .unwrap();
+    sid.downcast(&d).unwrap().force_synchronize();
+    sid.downcast(&d).unwrap().with_histograms(|hs| {
+        assert_eq!(hs.len(), 1);
+        let hs = &hs["span"];
+        assert_eq!(hs.len(), 3);
+        assert!(hs.contains_key("event1"));
+        assert!(hs.contains_key("event2"));
+        assert_eq!(hs["event1"].max(), 1);
+        assert_eq!(hs["event2"].max(), 2);
+        // event3 "raced" with event2, and ended up recording "negative" time
+        // in this case, event3's sample should be dropped.
+        assert!(hs.contains_key("event3"));
+        assert_eq!(hs["event3"].len(), 0);
+    })
+}
+
+#[test]
 fn event_order() {
     let s = Builder::default().build(|| Histogram::new_with_max(200_000_000, 1).unwrap());
     let sid = s.downcaster();
@@ -345,6 +384,25 @@ fn by_closure() {
 }
 
 #[test]
+fn free_standing_event() {
+    let s = Builder::default().build(|| Histogram::new_with_max(200_000_000, 1).unwrap());
+    let sid = s.downcaster();
+    let d = Dispatch::new(s);
+    let d2 = d.clone();
+    std::thread::spawn(move || {
+        dispatcher::with_default(&d2, || {
+            trace!("event");
+        })
+    })
+    .join()
+    .unwrap();
+    sid.downcast(&d).unwrap().with_histograms(|hs| {
+        // free-standing events should not be recorded
+        assert_eq!(hs.len(), 0);
+    })
+}
+
+#[test]
 fn nested() {
     let s = Builder::default().build(|| Histogram::new_with_max(200_000_000, 1).unwrap());
     let sid = s.downcaster();
@@ -361,6 +419,9 @@ fn nested() {
                         trace!("event1");
                         std::thread::sleep(std::time::Duration::from_millis(1));
                         trace!("event2");
+                        // now do an event twice so we check the re-use path
+                        trace!("event3");
+                        trace!("event3");
                     })
                 })
             })
@@ -375,10 +436,11 @@ fn nested() {
             assert!(hs.contains_key(s));
             assert!(hs[s].contains_key("event1"));
             assert!(hs[s].contains_key("event2"));
-            assert_eq!(hs[s].len(), 2);
+            assert_eq!(hs[s].len(), 3);
             for &e in &["event1", "event2"] {
                 assert_eq!(hs[s][e].len(), 1);
             }
+            assert_eq!(hs[s]["event3"].len(), 2);
         }
 
         // timing should differ between the different spans for event1
