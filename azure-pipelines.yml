@@ -69,7 +69,7 @@ stages:
          vmImage: ubuntu-16.04
        container:
          image: xd009642/tarpaulin:latest
-         options: --security-opt seccomp=unconfined -v "$(Build.SourcesDirectory):/volume"
+         options: --security-opt seccomp=unconfined
        steps:
          - script: cargo tarpaulin --out Xml
            displayName: Run tarpaulin
