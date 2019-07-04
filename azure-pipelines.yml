@@ -68,7 +68,7 @@ stages:
        pool:
          vmImage: ubuntu-16.04
        container:
-         image: xd009642:tarpaulin
+         image: xd009642/tarpaulin:latest
          options: --security-opt seccomp=unconfined -v "$(Build.SourcesDirectory):/volume" sh -c "cargo tarpaulin --out Xml"
        steps:
          - script: bash <(curl -s https://codecov.io/bash)
