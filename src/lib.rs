@@ -156,10 +156,11 @@ pub use hdrhistogram::Histogram;
 pub mod group;
 
 #[derive(Debug, Clone)]
-struct SpanGroupIdent<S> {
+struct SpanGroupContext<S> {
     group: S,
     parent: Option<span::Id>,
     follows: Option<span::Id>,
+    meta: &'static Metadata<'static>,
 }
 
 type Map<S, E, T> = HashMap<S, HashMap<E, T>>;
@@ -232,7 +233,7 @@ struct WriterState<S, E> {
     refcount: Slab<atomic::AtomicUsize>,
 
     // note that many span::Ids can map to the same S
-    spans: Slab<SpanGroupIdent<S>>,
+    spans: Slab<SpanGroupContext<S>>,
 
     // TID => (S + callsite) => E => thread-local Recorder
     tls: ThreadLocal<Map<S, E, Recorder<u64>>>,
@@ -476,10 +477,11 @@ where
             .parent()
             .cloned()
             .or_else(|| SPAN.with(|current_span| current_span.borrow().last().cloned()));
-        let sg = SpanGroupIdent {
+        let sg = SpanGroupContext {
             group,
             parent,
             follows: None,
+            meta: span.metadata(),
         };
 
         let mut inner = self.writers.write().unwrap();
@@ -560,6 +562,18 @@ where
             inner.spans.remove(span_id_to_slab_idx(&span));
             // we _keep_ the entry in inner.recorders in place, since it may be used by other spans
         }
+    }
+
+    fn current_span(&self) -> span::Current {
+        SPAN.with(|current_span| {
+            current_span.borrow_mut().last().map(|sid| {
+                span::Current::new(
+                    sid.clone(),
+                    self.writers.read().unwrap().spans[span_id_to_slab_idx(sid)].meta,
+                )
+            })
+        })
+        .unwrap_or_else(span::Current::none)
     }
 }
 

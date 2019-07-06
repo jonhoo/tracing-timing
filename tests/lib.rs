@@ -580,3 +580,33 @@ fn explicit_event_parent() {
         assert_eq!(hs["foo"].len(), 1);
     })
 }
+
+#[test]
+fn tracks_current_span() {
+    let d = Dispatch::new(
+        Builder::default().build(|| Histogram::new_with_max(200_000_000, 1).unwrap()),
+    );
+    dispatcher::with_default(&d, || {
+        let span = trace_span!("span");
+        span.in_scope(|| {
+            assert_eq!(span, Span::current());
+        })
+    });
+}
+
+#[test]
+fn tracks_current_span_deep() {
+    let d = Dispatch::new(
+        Builder::default().build(|| Histogram::new_with_max(200_000_000, 1).unwrap()),
+    );
+    dispatcher::with_default(&d, || {
+        trace_span!("span1").in_scope(|| {
+            trace_span!("span2").in_scope(|| {
+                let span = trace_span!("span3");
+                span.in_scope(|| {
+                    assert_eq!(span, Span::current());
+                })
+            });
+        });
+    });
+}
