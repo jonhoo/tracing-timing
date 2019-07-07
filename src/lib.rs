@@ -551,12 +551,27 @@ where
     }
 
     fn drop_span(&self, span: span::Id) {
-        if 1 == self.writers.read().unwrap().refcount[span_id_to_slab_idx(&span)]
+        macro_rules! unwinding_lock {
+            ($lock:expr) => {
+                match $lock {
+                    Ok(g) => g,
+                    Err(_) if std::thread::panicking() => {
+                        // we're trying to take the span lock while panicking
+                        // the lock is poisoned, so the writer state is corrupt
+                        // so we might as well just return -- nothing more we can do
+                        return;
+                    }
+                    r @ Err(_) => r.unwrap(),
+                }
+            };
+        };
+
+        if 1 == unwinding_lock!(self.writers.read()).refcount[span_id_to_slab_idx(&span)]
             .fetch_sub(1, atomic::Ordering::AcqRel)
         {
             // span has ended!
             // reclaim its id
-            let mut inner = self.writers.write().unwrap();
+            let mut inner = unwinding_lock!(self.writers.write());
             inner.last_event.remove(span_id_to_slab_idx(&span));
             inner.refcount.remove(span_id_to_slab_idx(&span));
             inner.spans.remove(span_id_to_slab_idx(&span));
