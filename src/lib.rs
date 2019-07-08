@@ -224,7 +224,7 @@ fn span_id_to_slab_idx(span: &span::Id) -> usize {
     span.into_u64() as usize - 1
 }
 
-struct WriterState<S, E> {
+struct WriterState<S: Hash + Eq, E: Hash + Eq> {
     // We need fast access to the last event for each span.
     last_event: Slab<atomic::AtomicU64>,
 
@@ -252,7 +252,24 @@ struct WriterState<S, E> {
     new_histogram: Box<dyn FnMut(&S, &E) -> Histogram<u64> + Send + Sync>,
 }
 
-struct ReaderState<S, E> {
+impl<S, E> std::fmt::Debug for WriterState<S, E>
+where
+    S: Hash + Eq + std::fmt::Debug,
+    E: Hash + Eq + std::fmt::Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WriterState")
+            .field("last_event", &self.last_event)
+            .field("refcountn", &self.refcount)
+            .field("spans", &self.spans)
+            .field("idle_recorders", &self.idle_recorders)
+            .field("created", &self.created)
+            .finish()
+    }
+}
+
+#[derive(Debug)]
+struct ReaderState<S: Hash + Eq, E: Hash + Eq> {
     created: channel::Receiver<(S, E, SyncHistogram<u64>)>,
     histograms: HashMap<S, IndexMap<E, SyncHistogram<u64>, Hasher>>,
 }
@@ -277,6 +294,24 @@ where
 
     writers: ShardedLock<WriterState<S::Id, E::Id>>,
     reader: Mutex<ReaderState<S::Id, E::Id>>,
+}
+
+impl<S, E> std::fmt::Debug for TimingSubscriber<S, E>
+where
+    S: SpanGroup + std::fmt::Debug,
+    E: EventGroup + std::fmt::Debug,
+    S::Id: Hash + Eq + std::fmt::Debug,
+    E::Id: Hash + Eq + std::fmt::Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TimingSubscriber")
+            .field("span_group", &self.span_group)
+            .field("event_group", &self.event_group)
+            .field("time", &self.time)
+            .field("writers", &self.writers)
+            .field("reader", &self.reader)
+            .finish()
+    }
 }
 
 impl<S, E> TimingSubscriber<S, E>
