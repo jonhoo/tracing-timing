@@ -287,19 +287,22 @@ where
     E::Id: Clone + Hash + Eq,
 {
     fn time(&self, mut span: span::Id, event: &Event) {
-        let now = self.time.now();
+        let start = self.time.now();
         let inner = self.writers.read().unwrap();
 
         let record =
             move |last_event: &Slab<atomic::AtomicU64>, r: &mut Recorder<u64>, span: &span::Id| {
-                let previous =
-                    last_event[span_id_to_slab_idx(span)].swap(now, atomic::Ordering::AcqRel);
-                if previous > now {
+                // NOTE: we substitute in the last possible timestamp to avoid measuring time spent
+                // in accessing the various timing datastructures (like taking locks). this has the
+                // effect of measuing Δt₁₂ = e₂.start - e₁.end, which is probably what users expect
+                let previous = last_event[span_id_to_slab_idx(span)]
+                    .swap(self.time.now(), atomic::Ordering::AcqRel);
+                if previous > start {
                     // someone else recorded a sample _just_ now
                     // the delta is effectively zero, but recording a 0 sample is misleading
                     return;
                 }
-                r.saturating_record(now - previous)
+                r.saturating_record(start - previous)
             };
 
         // who are we?

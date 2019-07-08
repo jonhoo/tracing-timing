@@ -451,11 +451,14 @@ fn nested() {
         assert!(foo_e1 > bar_e1);
         assert!(bar_e1 > baz_e1);
         // for event2 however, they should all be relative to event1
+        // note, however, that event1.end is _later_ for foo than for bar/baz
+        // because events are recorded for spans in reverse span order
         let foo_e2 = &hs["foo"]["event2"].max();
         let bar_e2 = &hs["bar"]["event2"].max();
         let baz_e2 = &hs["baz"]["event2"].max();
-        assert_eq!(foo_e2, bar_e2);
-        assert_eq!(foo_e2, baz_e2);
+        assert!(foo_e2 <= bar_e2);
+        assert!(foo_e2 <= baz_e2);
+        assert!(bar_e2 <= baz_e2);
     })
 }
 
@@ -515,11 +518,14 @@ fn nested_diff() {
         // in both foo and bar, baz_event should be measured relative to bar_event
         // in baz, baz_event should be measured relative to the start of baz
         // therefore, baz should see a lower time for baz_event than foo or bar
-        // and foo and bar should see the _same_ time
+        // and foo and bar should see the _same_ time.
+        // note, however, that bar_event.end is _later_ for foo than for bar
+        // because events are recorded for spans in reverse span order, so
+        // baz will appear to have happened _sooner_ to foo.
         let foo_baz_e = &hs["foo"]["baz_event"].max();
         let bar_baz_e = &hs["bar"]["baz_event"].max();
         let baz_baz_e = &hs["baz"]["baz_event"].max();
-        assert_eq!(foo_baz_e, bar_baz_e);
+        assert!(foo_baz_e <= bar_baz_e);
         assert!(foo_baz_e > baz_baz_e);
     })
 }
