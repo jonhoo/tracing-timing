@@ -1,6 +1,6 @@
 [package]
 name = "tracing-timing"
-version = "0.2.8"
+version = "0.2.9"
 edition = "2018"
 authors = ["Jon Gjengset <jon@thesquareplanet.com>"]
 
@@ -21,7 +21,7 @@ codecov = { repository = "jonhoo/tracing-timing", branch = "master", service = "
 maintenance = { status = "experimental" }
 
 [dependencies]
-tracing-core = "0.1.1"
+tracing-core = "0.1.2"
 hdrhistogram = "6.3.3"
 slab = "0.4"
 quanta = "0.3"

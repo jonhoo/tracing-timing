@@ -588,7 +588,7 @@ where
         span.clone()
     }
 
-    fn drop_span(&self, span: span::Id) {
+    fn try_close(&self, span: span::Id) -> bool {
         macro_rules! unwinding_lock {
             ($lock:expr) => {
                 match $lock {
@@ -597,7 +597,7 @@ where
                         // we're trying to take the span lock while panicking
                         // the lock is poisoned, so the writer state is corrupt
                         // so we might as well just return -- nothing more we can do
-                        return;
+                        return false;
                     }
                     r @ Err(_) => r.unwrap(),
                 }
@@ -614,6 +614,9 @@ where
             inner.refcount.remove(span_id_to_slab_idx(&span));
             inner.spans.remove(span_id_to_slab_idx(&span));
             // we _keep_ the entry in inner.recorders in place, since it may be used by other spans
+            true
+        } else {
+            false
         }
     }
 
