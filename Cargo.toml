@@ -1,6 +1,6 @@
 [package]
 name = "tracing-timing"
-version = "0.2.9"
+version = "0.2.10"
 edition = "2018"
 authors = ["Jon Gjengset <jon@thesquareplanet.com>"]
 
