@@ -15,7 +15,7 @@ categories = ["development-tools::profiling", "visualization"]
 
 [badges]
 travis-ci = { repository = "jonhoo/tracing-timing" }
-azure-devops = { project = "jonhoo/tracing-timing", pipeline = "jonhoo.tracing-timing" }
+azure-devops = { project = "jonhoo/jonhoo", pipeline = "jonhoo.tracing-timing" }
 cirrus-ci = { repository = "jonhoo/tracing-timing" }
 codecov = { repository = "jonhoo/tracing-timing", branch = "master", service = "github" }
 maintenance = { status = "experimental" }
