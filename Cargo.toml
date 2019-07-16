@@ -1,6 +1,6 @@
 [package]
 name = "tracing-timing"
-version = "0.2.10"
+version = "0.2.11"
 edition = "2018"
 authors = ["Jon Gjengset <jon@thesquareplanet.com>"]
 
@@ -15,7 +15,7 @@ categories = ["development-tools::profiling", "visualization"]
 
 [badges]
 travis-ci = { repository = "jonhoo/tracing-timing" }
-azure-devops = { project = "jonhoo/jonhoo", pipeline = "jonhoo.tracing-timing" }
+azure-devops = { project = "jonhoo/jonhoo", pipeline = "tracing-timing" }
 cirrus-ci = { repository = "jonhoo/tracing-timing" }
 codecov = { repository = "jonhoo/tracing-timing", branch = "master", service = "github" }
 maintenance = { status = "experimental" }
