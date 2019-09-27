@@ -5,7 +5,7 @@ use std::hash::Hash;
 ///
 /// This type implements the [builder pattern]. It lets you easily configure and construct a new
 /// [`TimingSubscriber`] subscriber. See the individual methods for details. To start, use
-/// [`Builder::from`]:
+/// [`Builder::default`]:
 ///
 /// ```rust
 /// use tracing_timing::{Builder, Histogram};

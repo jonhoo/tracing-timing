@@ -13,7 +13,7 @@ inter-event timing information. More concretely, given code like this:
 ```rust
 use tracing::*;
 use tracing_timing::{Builder, Histogram};
-let subscriber = Builder::from(|| Histogram::new_with_max(1_000_000, 2).unwrap()).build();
+let subscriber = Builder::default().build(|| Histogram::new_with_max(1_000_000, 2).unwrap());
 let dispatcher = Dispatch::new(subscriber);
 dispatcher::with_default(&dispatcher, || {
     trace_span!("request").in_scope(|| {
