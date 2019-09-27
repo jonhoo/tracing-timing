@@ -1,4 +1,4 @@
-//! Inter-event timing metrics.
+//! Inter-event timing metrics on top of [`tracing`].
 //!
 //! This crate provides a `tracing::Subscriber` that keeps statistics on inter-event timing
 //! information. More concretely, given code like this:
@@ -116,6 +116,7 @@
 //! extraneous spans. One technique that works well here is subsampling your application, for
 //! example by only creating tracking spans for _some_ of your requests.
 //!
+//!   [`tracing`]: https://docs.rs/tracing/
 //!   [high dynamic range histograms]: https://hdrhistogram.github.io/HdrHistogram/
 //!   [`hdrhistogram`]: https://docs.rs/hdrhistogram/
 //!   [`quanta`]: https://docs.rs/quanta/
@@ -135,6 +136,10 @@ use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 use std::sync::{atomic, Mutex};
 use tracing_core::*;
+
+// also test README.md code example
+use doc_comment::doc_comment;
+doc_comment!(include_str!("../README.md"));
 
 /// A faster hasher for `tracing-timing` maps.
 pub type Hasher = fxhash::FxBuildHasher;

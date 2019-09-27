@@ -27,6 +27,7 @@ quanta = "0.3"
 fxhash = "0.2"
 crossbeam = "0.7"
 indexmap = "1.0"
+doc-comment = "0.3"
 
 [dev-dependencies]
 tracing = "0.1.2"

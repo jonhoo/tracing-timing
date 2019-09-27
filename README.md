@@ -1,19 +1,19 @@
 [![Crates.io](https://img.shields.io/crates/v/tracing-timing.svg)](https://crates.io/crates/tracing-timing)
 [![Documentation](https://docs.rs/tracing-timing/badge.svg)](https://docs.rs/tracing-timing/)
-[![Build Status](https://dev.azure.com/jonhoo/jonhoo/_apis/build/status/tracing-timing?branchName=master)](https://dev.azure.com/jonhoo/jonhoo/_build/latest?definitionId=5&branchName=master)
+[![Build Status](https://dev.azure.com/jonhoo/jonhoo/_apis/build/status/tracing-timing?branchName=master)](https://dev.azure.com/jonhoo/jonhoo/_build/latest?definitionId=5&amp;branchName=master)
 [![Cirrus CI Build Status](https://api.cirrus-ci.com/github/jonhoo/tracing-timing.svg)](https://cirrus-ci.com/github/jonhoo/tracing-timing)
 [![Codecov](https://codecov.io/github/jonhoo/tracing-timing/coverage.svg?branch=master)](https://codecov.io/gh/jonhoo/tracing-timing)
 [![Dependency status](https://deps.rs/repo/github/jonhoo/tracing-timing/status.svg)](https://deps.rs/repo/github/jonhoo/tracing-timing)
 
 Inter-event timing metrics on top of [`tracing`].
 
-This crate provides a `tracing::Subscriber` that keeps statistics on
-inter-event timing information. More concretely, given code like this:
+This crate provides a `tracing::Subscriber` that keeps statistics on inter-event timing
+information. More concretely, given code like this:
 
 ```rust
 use tracing::*;
 use tracing_timing::{Builder, Histogram};
-let subscriber = Builder::from(|| Histogram::new_with_max(1_000_000, 2).unwrap()).build();
+let subscriber = Builder::default().build(|| Histogram::new_with_max(1_000_000, 2).unwrap());
 let dispatcher = Dispatch::new(subscriber);
 dispatcher::with_default(&dispatcher, || {
     trace_span!("request").in_scope(|| {
@@ -25,7 +25,7 @@ dispatcher::with_default(&dispatcher, || {
 });
 ```
 
-You can produce something like this:
+You can produce something like this (see `examples/pretty.rs`):
 
 ```text
 fast:
@@ -57,12 +57,11 @@ mean: 623.3µs, p50: 630µs, p90: 696µs, p99: 770µs, p999: 851µs, max: 950µs
  725µs | **                                       | 97.1th %-ile
 ```
 
-When `TimingSubscriber` is used as the `tracing::Dispatch`, the time
-between each event in a span is measured using [`quanta`], and is
-recorded in "[high dynamic range histograms]" using [`hdrhistogram`]'s
-multi-threaded recording facilities. The recorded timing information is
-grouped using the `SpanGroup` and `EventGroup` traits, allowing you to
-combine recorded statistics across spans and events.
+When [`TimingSubscriber`] is used as the `tracing::Dispatch`, the time between each event in a
+span is measured using [`quanta`], and is recorded in "[high dynamic range histograms]" using
+[`hdrhistogram`]'s multi-threaded recording facilities. The recorded timing information is
+grouped using the [`SpanGroup`] and [`EventGroup`] traits, allowing you to combine recorded
+statistics across spans and events.
 
   [`tracing`]: https://docs.rs/tracing-core/
   [high dynamic range histograms]: https://hdrhistogram.github.io/HdrHistogram/
