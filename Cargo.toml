@@ -14,7 +14,7 @@ keywords = ["perf", "tracing", "profiling"]
 categories = ["development-tools::profiling", "visualization"]
 
 [badges]
-azure-devops = { project = "jonhoo/jonhoo", pipeline = "tracing-timing", build = "5" }
+azure-devops = { project = "jonhoo/jonhoo", pipeline = "tracing-timing", build = "13" }
 cirrus-ci = { repository = "jonhoo/tracing-timing" }
 codecov = { repository = "jonhoo/tracing-timing", branch = "master", service = "github" }
 maintenance = { status = "experimental" }
