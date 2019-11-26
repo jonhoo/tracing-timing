@@ -25,9 +25,9 @@ fn by_name() {
         let hs = &hs["foo"];
         assert_eq!(hs.len(), 1);
         #[cfg(windows)]
-        assert!(hs.contains_key("event tests\\lib.rs:17"));
+        assert!(hs.contains_key("event tests\\subscriber.rs:17"));
         #[cfg(not(windows))]
-        assert!(hs.contains_key("event tests/lib.rs:17"));
+        assert!(hs.contains_key("event tests/subscriber.rs:17"));
     })
 }
 
@@ -65,7 +65,7 @@ fn by_target() {
     .unwrap();
     sid.downcast(&d).unwrap().with_histograms(|hs| {
         assert_eq!(hs.len(), 1);
-        let hs = &hs["lib"];
+        let hs = &hs["subscriber"];
         assert_eq!(hs.len(), 1);
         assert!(hs.contains_key("e"));
     })

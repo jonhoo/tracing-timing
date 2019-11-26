@@ -131,7 +131,6 @@ use crossbeam::channel;
 use crossbeam::sync::ShardedLock;
 use hdrhistogram::{sync::Recorder, SyncHistogram};
 use indexmap::IndexMap;
-use slab::Slab;
 use std::cell::{RefCell, UnsafeCell};
 use std::hash::Hash;
 use std::marker::PhantomData;
@@ -152,7 +151,6 @@ pub type HashMap<K, V> = std::collections::HashMap<K, V, Hasher>;
 static TID: atomic::AtomicUsize = atomic::AtomicUsize::new(0);
 
 thread_local! {
-    static SPAN: RefCell<Vec<span::Id>> = RefCell::new(Vec::new());
     static MYTID: RefCell<Option<usize>> = RefCell::new(None);
 }
 
@@ -161,14 +159,6 @@ pub use builder::Builder;
 pub use hdrhistogram::Histogram;
 
 pub mod group;
-
-#[derive(Debug, Clone)]
-struct SpanGroupContext<S> {
-    group: S,
-    parent: Option<span::Id>,
-    follows: Option<span::Id>,
-    meta: &'static Metadata<'static>,
-}
 
 type Map<S, E, T> = HashMap<S, HashMap<E, T>>;
 
@@ -232,16 +222,6 @@ fn span_id_to_slab_idx(span: &span::Id) -> usize {
 }
 
 struct WriterState<S: Hash + Eq, E: Hash + Eq> {
-    // We need fast access to the last event for each span.
-    last_event: Slab<atomic::AtomicU64>,
-
-    // how many references are there to each span id?
-    // needed so we know when to reclaim
-    refcount: Slab<atomic::AtomicUsize>,
-
-    // note that many span::Ids can map to the same S
-    spans: Slab<SpanGroupContext<S>>,
-
     // TID => (S + callsite) => E => thread-local Recorder
     tls: ThreadLocal<Map<S, E, Recorder<u64>>>,
 
@@ -266,9 +246,6 @@ where
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("WriterState")
-            .field("last_event", &self.last_event)
-            .field("refcountn", &self.refcount)
-            .field("spans", &self.spans)
             .field("idle_recorders", &self.idle_recorders)
             .field("created", &self.created)
             .finish()
@@ -281,18 +258,20 @@ struct ReaderState<S: Hash + Eq, E: Hash + Eq> {
     histograms: HashMap<S, IndexMap<E, SyncHistogram<u64>, Hasher>>,
 }
 
-/// Timing-gathering tracing subscriber.
-///
-/// This type is constructed using a [`Builder`].
-///
-/// See the [crate-level docs] for details.
-///
-///   [crate-level docs]: ../
-pub struct TimingSubscriber<S = group::ByName, E = group::ByMessage>
+#[derive(Debug)]
+struct SpanState<S> {
+    group: S,
+
+    // We need fast access to the last event for each span.
+    last_event: atomic::AtomicU64,
+}
+
+// Share impl between Subscriber and Layer versions
+struct Timing<S = group::ByName, E = group::ByMessage>
 where
     S: SpanGroup,
-    E: EventGroup,
     S::Id: Hash + Eq,
+    E: EventGroup,
     E::Id: Hash + Eq,
 {
     span_group: S,
@@ -304,7 +283,7 @@ where
     reader: Mutex<ReaderState<S::Id, E::Id>>,
 }
 
-impl<S, E> std::fmt::Debug for TimingSubscriber<S, E>
+impl<S, E> std::fmt::Debug for Timing<S, E>
 where
     S: SpanGroup + std::fmt::Debug,
     E: EventGroup + std::fmt::Debug,
@@ -312,7 +291,7 @@ where
     E::Id: Hash + Eq + std::fmt::Debug,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("TimingSubscriber")
+        f.debug_struct("Timing")
             .field("span_group", &self.span_group)
             .field("event_group", &self.event_group)
             .field("time", &self.time)
@@ -322,144 +301,14 @@ where
     }
 }
 
-impl<S, E> TimingSubscriber<S, E>
+impl<S, E> Timing<S, E>
 where
     S: SpanGroup,
     E: EventGroup,
-    S::Id: Clone + Hash + Eq,
-    E::Id: Clone + Hash + Eq,
+    S::Id: Hash + Eq,
+    E::Id: Hash + Eq,
 {
-    fn time(&self, mut span: span::Id, event: &Event) {
-        let start = self.time.now();
-        let inner = self.writers.read().unwrap();
-
-        let record =
-            move |last_event: &Slab<atomic::AtomicU64>, r: &mut Recorder<u64>, span: &span::Id| {
-                // NOTE: we substitute in the last possible timestamp to avoid measuring time spent
-                // in accessing the various timing datastructures (like taking locks). this has the
-                // effect of measuing Δt₁₂ = e₂.start - e₁.end, which is probably what users expect
-                let previous = last_event[span_id_to_slab_idx(span)]
-                    .swap(self.time.now(), atomic::Ordering::AcqRel);
-                if previous > start {
-                    // someone else recorded a sample _just_ now
-                    // the delta is effectively zero, but recording a 0 sample is misleading
-                    return;
-                }
-                r.saturating_record(start - previous)
-            };
-
-        // who are we?
-        let tid = ThreadId::default();
-
-        // fast path: sid/eid pair is known to this thread
-        let eid = self.event_group.group(event);
-        if let Some(ref tls) = inner.tls.get(&tid) {
-            // we know no-one else has our TID:
-            // NOTE: it's _not_ safe to use this after we drop the lock due to force_synchronize.
-            let tls = unsafe { &mut *tls.get() };
-
-            loop {
-                // the span id _must_ be known, as it's added when created
-                let sgi = &inner.spans[span_id_to_slab_idx(&span)];
-                if let Some(ref mut recorder) =
-                    tls.get_mut(&sgi.group).and_then(|rs| rs.get_mut(&eid))
-                {
-                    // sid/eid already known and we already have a thread-local recorder!
-                    record(&inner.last_event, recorder, &span);
-                } else if let Some(ref ir) = inner.idle_recorders[&sgi.group].get(&eid) {
-                    // we didn't know about the eid, but if there's already a recorder for it,
-                    // we can just create a local recorder from it and move on
-                    let mut recorder = ir.recorder();
-                    record(&inner.last_event, &mut recorder, &span);
-                    let r = tls
-                        .entry(sgi.group.clone())
-                        .or_insert_with(Default::default)
-                        .insert(eid.clone(), recorder);
-                    assert!(r.is_none());
-                } else {
-                    // we're the first thread to see this pair, so we need to make a histogram for it
-                    break;
-                }
-
-                if let Some(ref psi) = sgi.parent {
-                    if self.bubble_spans {
-                        // keep recording up the stack
-                        span = psi.clone();
-                    } else {
-                        return;
-                    }
-                } else {
-                    return;
-                }
-            }
-
-        // at least one sid/eid pair was unknown
-        } else {
-            // this thread does not yet have TLS -- we'll have to take the lock
-        }
-
-        // slow path: either this thread is new, or a sid/eid pair was new
-        // in either case, we need to take the write lock
-        // to do that, we must first drop the read lock
-        drop(inner);
-        let mut inner = self.writers.write().unwrap();
-        let inner = &mut *inner;
-
-        // if we don't have any thread-local state, construct that first
-        let tls = inner.tls.entry(tid).or_insert_with(Default::default);
-        // no-one else has our TID _and_ we have exclusive access to inner
-        let tls = unsafe { &mut *tls.get() };
-
-        // use an existing recorder if one exists, or make a new histogram if one does not
-        let nh = &mut inner.new_histogram;
-        let created = &mut inner.created;
-        let idle = &mut inner.idle_recorders;
-        loop {
-            let sgi = &inner.spans[span_id_to_slab_idx(&span)];
-
-            // since we're recursing up the tree, we _may_ find that we already have a recorder for
-            // a _later_ span's sid/eid. make sure we don't create a new one in that case!
-            let recorder = tls
-                .entry(sgi.group.clone())
-                .or_insert_with(Default::default)
-                .entry(eid.clone())
-                .or_insert_with(|| {
-                    // nope, get us a thread-local recorder
-                    idle.get_mut(&sgi.group)
-                        .unwrap()
-                        .entry(eid.clone())
-                        .or_insert_with(|| {
-                            // no histogram exists! make one.
-                            let h = (nh)(&sgi.group, &eid).into_sync();
-                            let ir = h.recorder().into_idle();
-                            created.send((sgi.group.clone(), eid.clone(), h)).expect(
-                                "WriterState implies ReaderState, which holds the receiver",
-                            );
-                            ir
-                        })
-                        .recorder()
-                });
-
-            // finally, we can record the sample
-            record(&inner.last_event, recorder, &span);
-
-            // recurse to parent if any
-            if let Some(ref psi) = sgi.parent {
-                if self.bubble_spans {
-                    span = psi.clone();
-                } else {
-                    break;
-                }
-            } else {
-                break;
-            }
-        }
-    }
-
-    /// Force all current timing information to be refreshed immediately.
-    ///
-    /// Note that this will interrupt all concurrent metrics gathering until it returns.
-    pub fn force_synchronize(&self) {
+    fn force_synchronize(&self) {
         // first, remove all thread-local recorders
         let mut inner = self.writers.write().unwrap();
         // note that we don't remove the tls _entry_,
@@ -482,17 +331,7 @@ where
         })
     }
 
-    /// Access the timing histograms.
-    ///
-    /// Be aware that the contained histograms are not automatically updated to reflect recently
-    /// gathered samples. For each histogram you wish to read from, you must call `refresh` or
-    /// `refresh_timeout` or `force_synchronize` to gather up-to-date samples.
-    ///
-    /// For information about what you can do with the histograms, see the [`hdrhistogram`
-    /// documentation].
-    ///
-    ///   [`hdrhistogram` documentation]: https://docs.rs/hdrhistogram/
-    pub fn with_histograms<F, R>(&self, f: F) -> R
+    fn with_histograms<F, R>(&self, f: F) -> R
     where
         F: FnOnce(&mut HashMap<S::Id, IndexMap<E::Id, SyncHistogram<u64>, Hasher>>) -> R,
     {
@@ -513,212 +352,137 @@ where
     }
 }
 
-impl<S, E> Subscriber for TimingSubscriber<S, E>
-where
-    S: SpanGroup + 'static,
-    E: EventGroup + 'static,
-    S::Id: Clone + Hash + Eq + 'static,
-    E::Id: Clone + Hash + Eq + 'static,
-{
-    fn enabled(&self, _: &Metadata) -> bool {
-        // TODO: implement support for per-group subsampling
-        true
-    }
-
-    fn new_span(&self, span: &span::Attributes) -> span::Id {
-        let group = self.span_group.group(span);
-        let parent = span
-            .parent()
-            .cloned()
-            .or_else(|| SPAN.with(|current_span| current_span.borrow().last().cloned()));
-        let sg = SpanGroupContext {
-            group,
-            parent,
-            follows: None,
-            meta: span.metadata(),
-        };
-
-        let mut inner = self.writers.write().unwrap();
-        let id = inner.refcount.insert(atomic::AtomicUsize::new(1));
-        let id2 = inner.spans.insert(sg.clone());
-        assert_eq!(id, id2);
-        inner
-            .idle_recorders
-            .entry(sg.group)
-            .or_insert_with(HashMap::default);
-        let id2 = inner
-            .last_event
-            .insert(atomic::AtomicU64::new(self.time.now()));
-        assert_eq!(id, id2);
-        span::Id::from_u64(id as u64 + 1)
-    }
-
-    fn record(&self, _: &span::Id, _: &span::Record) {}
-
-    fn record_follows_from(&self, span: &span::Id, follows: &span::Id) {
-        let mut inner = self.writers.write().unwrap();
-        inner
-            .spans
-            .get_mut(span_id_to_slab_idx(span))
-            .unwrap()
-            .follows = Some(follows.clone());
-    }
-
-    fn event(&self, event: &Event) {
-        let span = event.parent().cloned().or_else(|| {
-            SPAN.with(|current_span| {
-                let current_span = current_span.borrow();
-                current_span.last().cloned()
-            })
-        });
-        if let Some(span) = span {
-            self.time(span, event);
-        } else {
-            // recorded free-standing event -- ignoring
-        }
-    }
-
-    fn enter(&self, span: &span::Id) {
-        SPAN.with(|current_span| {
-            current_span.borrow_mut().push(span.clone());
-        })
-    }
-
-    fn exit(&self, span: &span::Id) {
-        // we are guaranteed that on any given thread, spans are exited in reverse order
-        SPAN.with(|current_span| {
-            let leaving = current_span
-                .borrow_mut()
-                .pop()
-                .expect("told to exit span when not in span");
-            assert_eq!(
-                &leaving, span,
-                "told to exit span that was not most recently entered"
-            );
-        })
-    }
-
-    fn clone_span(&self, span: &span::Id) -> span::Id {
-        let inner = self.writers.read().unwrap();
-        inner.refcount[span_id_to_slab_idx(span)].fetch_add(1, atomic::Ordering::AcqRel);
-        span.clone()
-    }
-
-    fn try_close(&self, span: span::Id) -> bool {
-        macro_rules! unwinding_lock {
-            ($lock:expr) => {
-                match $lock {
-                    Ok(g) => g,
-                    Err(_) if std::thread::panicking() => {
-                        // we're trying to take the span lock while panicking
-                        // the lock is poisoned, so the writer state is corrupt
-                        // so we might as well just return -- nothing more we can do
-                        return false;
-                    }
-                    r @ Err(_) => r.unwrap(),
-                }
-            };
-        };
-
-        if 1 == unwinding_lock!(self.writers.read()).refcount[span_id_to_slab_idx(&span)]
-            .fetch_sub(1, atomic::Ordering::AcqRel)
-        {
-            // span has ended!
-            // reclaim its id
-            let mut inner = unwinding_lock!(self.writers.write());
-            inner.last_event.remove(span_id_to_slab_idx(&span));
-            inner.refcount.remove(span_id_to_slab_idx(&span));
-            inner.spans.remove(span_id_to_slab_idx(&span));
-            // we _keep_ the entry in inner.recorders in place, since it may be used by other spans
-            true
-        } else {
-            false
-        }
-    }
-
-    fn current_span(&self) -> span::Current {
-        SPAN.with(|current_span| {
-            current_span.borrow_mut().last().map(|sid| {
-                span::Current::new(
-                    sid.clone(),
-                    self.writers.read().unwrap().spans[span_id_to_slab_idx(sid)].meta,
-                )
-            })
-        })
-        .unwrap_or_else(span::Current::none)
-    }
-}
-
-/// A convenience type for getting access to [`TimingSubscriber`] through a `Dispatch`.
-///
-/// See [`TimingSubscriber::downcaster`].
-#[derive(Debug, Copy)]
-pub struct Downcaster<S, E> {
-    phantom: PhantomData<fn(S, E)>,
-}
-
-impl<S, E> Clone for Downcaster<S, E> {
-    fn clone(&self) -> Self {
-        Self {
-            phantom: PhantomData,
-        }
-    }
-}
-
-impl<S, E> TimingSubscriber<S, E>
+impl<S, E> Timing<S, E>
 where
     S: SpanGroup,
     E: EventGroup,
     S::Id: Clone + Hash + Eq,
     E::Id: Clone + Hash + Eq,
 {
-    /// Returns an identifier that can later be used to get access to this [`TimingSubscriber`]
-    /// after it has been turned into a `tracing::Dispatch`.
-    ///
-    /// ```rust
-    /// use tracing::*;
-    /// use tracing_timing::{Builder, Histogram, TimingSubscriber};
-    /// let subscriber = Builder::default().build(|| Histogram::new_with_max(1_000_000, 2).unwrap());
-    /// let downcaster = subscriber.downcaster();
-    /// let dispatch = Dispatch::new(subscriber);
-    /// // ...
-    /// // code that hands off clones of the dispatch
-    /// // maybe to other threads
-    /// // ...
-    /// downcaster.downcast(&dispatch).unwrap().with_histograms(|hs| {
-    ///     for (span_group, hs) in hs {
-    ///         for (event_group, h) in hs {
-    ///             // make sure we see the latest samples:
-    ///             h.refresh();
-    ///             // print the median:
-    ///             println!("{} -> {}: {}ns", span_group, event_group, h.value_at_quantile(0.5))
-    ///         }
-    ///     }
-    /// });
-    /// ```
-    ///
-    pub fn downcaster(&self) -> Downcaster<S, E> {
-        Downcaster {
-            phantom: PhantomData,
+    fn time<'a, F>(&self, event: &Event, mut for_each_parent: F)
+    where
+        S: 'a,
+        F: FnMut(&mut dyn FnMut(&SpanState<S::Id>) -> bool),
+    {
+        let start = self.time.now();
+        let inner = self.writers.read().unwrap();
+
+        let record = move |state: &SpanState<S::Id>, r: &mut Recorder<u64>| {
+            // NOTE: we substitute in the last possible timestamp to avoid measuring time spent
+            // in accessing the various timing datastructures (like taking locks). this has the
+            // effect of measuing Δt₁₂ = e₂.start - e₁.end, which is probably what users expect
+            let previous = state
+                .last_event
+                .swap(self.time.now(), atomic::Ordering::AcqRel);
+            if previous > start {
+                // someone else recorded a sample _just_ now
+                // the delta is effectively zero, but recording a 0 sample is misleading
+                return;
+            }
+            r.saturating_record(start - previous)
+        };
+
+        // who are we?
+        let tid = ThreadId::default();
+
+        // fast path: sid/eid pair is known to this thread
+        let eid = self.event_group.group(event);
+        if let Some(ref tls) = inner.tls.get(&tid) {
+            // we know no-one else has our TID:
+            // NOTE: it's _not_ safe to use this after we drop the lock due to force_synchronize.
+            let tls = unsafe { &mut *tls.get() };
+
+            for_each_parent(&mut |state| {
+                // the span id _must_ be known, as it's added when created
+                if let Some(ref mut recorder) =
+                    tls.get_mut(&state.group).and_then(|rs| rs.get_mut(&eid))
+                {
+                    // sid/eid already known and we already have a thread-local recorder!
+                    record(state, recorder);
+                } else if let Some(ref ir) = inner.idle_recorders[&state.group].get(&eid) {
+                    // we didn't know about the eid, but if there's already a recorder for it,
+                    // we can just create a local recorder from it and move on
+                    let mut recorder = ir.recorder();
+                    record(state, &mut recorder);
+                    let r = tls
+                        .entry(state.group.clone())
+                        .or_insert_with(Default::default)
+                        .insert(eid.clone(), recorder);
+                    assert!(r.is_none());
+                } else {
+                    // we're the first thread to see this pair, so we need to make a histogram for it
+                    return false;
+                }
+
+                // keep recording up the stack
+                self.bubble_spans
+            });
+
+        // at least one sid/eid pair was unknown
+        } else {
+            // this thread does not yet have TLS -- we'll have to take the lock
         }
+
+        // slow path: either this thread is new, or a sid/eid pair was new
+        // in either case, we need to take the write lock
+        // to do that, we must first drop the read lock
+        drop(inner);
+        let mut inner = self.writers.write().unwrap();
+        let inner = &mut *inner;
+
+        // if we don't have any thread-local state, construct that first
+        let tls = inner.tls.entry(tid).or_insert_with(Default::default);
+        // no-one else has our TID _and_ we have exclusive access to inner
+        let tls = unsafe { &mut *tls.get() };
+
+        // use an existing recorder if one exists, or make a new histogram if one does not
+        let nh = &mut inner.new_histogram;
+        let created = &mut inner.created;
+        let idle = &mut inner.idle_recorders;
+        for_each_parent(&mut |state| {
+            // since we're recursing up the tree, we _may_ find that we already have a recorder for
+            // a _later_ span's sid/eid. make sure we don't create a new one in that case!
+            let recorder = tls
+                .entry(state.group.clone())
+                .or_insert_with(Default::default)
+                .entry(eid.clone())
+                .or_insert_with(|| {
+                    // nope, get us a thread-local recorder
+                    idle.get_mut(&state.group)
+                        .unwrap()
+                        .entry(eid.clone())
+                        .or_insert_with(|| {
+                            // no histogram exists! make one.
+                            let h = (nh)(&state.group, &eid).into_sync();
+                            let ir = h.recorder().into_idle();
+                            created.send((state.group.clone(), eid.clone(), h)).expect(
+                                "WriterState implies ReaderState, which holds the receiver",
+                            );
+                            ir
+                        })
+                        .recorder()
+                });
+
+            // finally, we can record the sample
+            record(state, recorder);
+
+            // recurse to parent if any
+            self.bubble_spans
+        });
+    }
+
+    fn ensure_group(&self, group: S::Id) {
+        self.writers
+            .write()
+            .unwrap()
+            .idle_recorders
+            .entry(group)
+            .or_insert_with(HashMap::default);
     }
 }
 
-impl<S, E> Downcaster<S, E>
-where
-    S: SpanGroup + 'static,
-    E: EventGroup + 'static,
-    S::Id: Clone + Hash + Eq + 'static,
-    E::Id: Clone + Hash + Eq + 'static,
-{
-    /// Retrieve a reference to this ident's original [`TimingSubscriber`].
-    ///
-    /// This method returns `None` if the given `Dispatch` is not holding a subscriber of the same
-    /// type as this ident was created from.
-    pub fn downcast<'a>(&self, d: &'a Dispatch) -> Option<&'a TimingSubscriber<S, E>> {
-        d.downcast_ref()
-    }
-}
+mod subscriber;
+pub use subscriber::{Downcaster as SubscriberDowncaster, TimingSubscriber};
 
 #[derive(Hash, Eq, PartialEq, Ord, PartialOrd, Debug, Copy, Clone)]
 #[repr(transparent)]

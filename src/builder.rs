@@ -1,4 +1,4 @@
-use crate::{group, EventGroup, Histogram, SpanGroup, TimingSubscriber};
+use crate::{group, EventGroup, Histogram, SpanGroup, Timing, TimingSubscriber};
 use std::hash::Hash;
 
 /// Builder for [`TimingSubscriber`] instances.
@@ -112,7 +112,7 @@ impl<S, E> Builder<S, E> {
         F: FnMut(&S::Id, &E::Id) -> Histogram<u64> + Send + Sync + 'static,
     {
         let (tx, rx) = crossbeam::channel::unbounded();
-        TimingSubscriber {
+        TimingSubscriber::new(Timing {
             span_group: self.span_group,
             event_group: self.event_group,
             time: self.time,
@@ -123,16 +123,13 @@ impl<S, E> Builder<S, E> {
             }
             .into(),
             writers: super::WriterState {
-                last_event: Default::default(),
-                refcount: Default::default(),
-                spans: Default::default(),
                 tls: Default::default(),
                 idle_recorders: Default::default(),
                 new_histogram: Box::new(new_histogram),
                 created: tx,
             }
             .into(),
-        }
+        })
     }
 
     /// Construct a [`TimingSubscriber`] that uses the given function to construct new histograms.
