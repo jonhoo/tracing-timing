@@ -1,3 +1,5 @@
+#[cfg(feature = "layer")]
+use crate::TimingLayer;
 use crate::{group, EventGroup, Histogram, SpanGroup, Timing, TimingSubscriber};
 use std::hash::Hash;
 
@@ -142,5 +144,64 @@ impl<S, E> Builder<S, E> {
         F: FnMut() -> Histogram<u64> + Send + Sync + 'static,
     {
         self.build_informed(move |_: &_, _: &_| (new_histogram)())
+    }
+
+    /// Construct a [`TimingLayer`] that uses the given function to construct new histograms.
+    ///
+    /// This is equivalent to [`layer`], except that the passed function is also told which
+    /// span/event group the histogram is for.
+    ///
+    /// Note that you _may_ run into weird lifetime errors from the compiler when using this method
+    /// with a closure. This is a [known compiler issue]. You can work around it by adding a slight
+    /// type hint to the arguments passed to the closure as follows (note the `: &_`):
+    ///
+    /// ```rust
+    /// use tracing_timing::{Builder, Histogram};
+    /// let builder = Builder::default();
+    /// let layer = builder.layer_informed(|s: &_, e: &_| Histogram::new(3).unwrap());
+    /// ```
+    ///
+    ///   [known compiler issue]: https://github.com/rust-lang/rust/issues/41078
+    #[cfg(feature = "layer")]
+    pub fn layer_informed<F>(self, new_histogram: F) -> TimingLayer<S, E>
+    where
+        S: SpanGroup,
+        E: EventGroup,
+        S::Id: Hash + Eq,
+        E::Id: Hash + Eq,
+        F: FnMut(&S::Id, &E::Id) -> Histogram<u64> + Send + Sync + 'static,
+    {
+        let (tx, rx) = crossbeam::channel::unbounded();
+        TimingLayer::new(Timing {
+            span_group: self.span_group,
+            event_group: self.event_group,
+            time: self.time,
+            bubble_spans: self.bubble_spans,
+            reader: super::ReaderState {
+                created: rx,
+                histograms: Default::default(),
+            }
+            .into(),
+            writers: super::WriterState {
+                tls: Default::default(),
+                idle_recorders: Default::default(),
+                new_histogram: Box::new(new_histogram),
+                created: tx,
+            }
+            .into(),
+        })
+    }
+
+    /// Construct a [`TimingSubscriber`] that uses the given function to construct new histograms.
+    #[cfg(feature = "layer")]
+    pub fn layer<F>(self, mut new_histogram: F) -> TimingLayer<S, E>
+    where
+        S: SpanGroup,
+        E: EventGroup,
+        S::Id: Hash + Eq,
+        E::Id: Hash + Eq,
+        F: FnMut() -> Histogram<u64> + Send + Sync + 'static,
+    {
+        self.layer_informed(move |_: &_, _: &_| (new_histogram)())
     }
 }

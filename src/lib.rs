@@ -92,6 +92,22 @@
 //! See the documentation for [`hdrhistogram`] for more on what you can do once you have the
 //! histograms.
 //!
+//! ## Using the [`Layer`](https://docs.rs/tracing-subscriber/0.2.0-alpha.4/tracing_subscriber/layer/trait.Layer.html) API
+//!
+//! To use the `Layer` API from `tracing-subscriber`, you first need to enable the `layer` feature.
+//! Then, use [`Builder::layer`] to construct a layer that you can mix in with other layers:
+//!
+//! ```rust
+//! # #[cfg(feature = "layer")] {
+//! # use tracing::*;
+//! # use tracing_timing::{Builder, Histogram};
+//! use tracing_subscriber::{registry::Registry, Layer};
+//! let timing_layer = Builder::default()
+//!     .layer(|| Histogram::new_with_max(1_000_000, 2).unwrap());
+//! let dispatch = Dispatch::new(timing_layer.with_subscriber(Registry::default()));
+//! # }
+//! ```
+//!
 //! ## Grouping samples
 //!
 //! By default, [`TimingSubscriber`] groups samples by the "name" of the containing span and the
@@ -483,6 +499,11 @@ where
 
 mod subscriber;
 pub use subscriber::{Downcaster as SubscriberDowncaster, TimingSubscriber};
+
+#[cfg(feature = "layer")]
+mod layer;
+#[cfg(feature = "layer")]
+pub use layer::{Downcaster as LayerDowncaster, TimingLayer};
 
 #[derive(Hash, Eq, PartialEq, Ord, PartialOrd, Debug, Copy, Clone)]
 #[repr(transparent)]
