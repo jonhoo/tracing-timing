@@ -531,6 +531,99 @@ fn nested_diff() {
 }
 
 #[test]
+fn nested_no_bubble() {
+    let s = Builder::default()
+        .no_span_recursion()
+        .build(|| Histogram::new_with_max(200_000_000, 1).unwrap());
+    let sid = s.downcaster();
+    let d = Dispatch::new(s);
+    let d2 = d.clone();
+    std::thread::spawn(move || {
+        dispatcher::with_default(&d2, || {
+            trace_span!("foo").in_scope(|| {
+                trace!("foo_start");
+                std::thread::sleep(std::time::Duration::from_millis(1));
+                trace_span!("bar").in_scope(|| {
+                    trace!("bar_start");
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                    trace!("bar_end");
+                });
+                trace!("foo_end");
+            })
+        })
+    })
+    .join()
+    .unwrap();
+    sid.downcast(&d).unwrap().force_synchronize();
+    sid.downcast(&d).unwrap().with_histograms(|hs| {
+        assert_eq!(hs.len(), 2);
+        assert!(hs.contains_key("foo"));
+        assert!(hs.contains_key("bar"));
+
+        // foo membership
+        assert!(hs["foo"].contains_key("foo_start"));
+        assert!(hs["foo"].contains_key("foo_end"));
+        assert!(!hs["foo"].contains_key("bar_start"));
+        assert!(!hs["foo"].contains_key("bar_end"));
+
+        // bar membership
+        assert!(hs["bar"].contains_key("bar_start"));
+        assert!(hs["bar"].contains_key("bar_end"));
+
+        // because of no_span_recursion(), bar_end - bar_start < foo_end - foo_start
+        let bar_t = hs["bar"]["bar_end"].max();
+        let foo_t = hs["foo"]["foo_end"].max();
+        assert!(foo_t > bar_t);
+    })
+}
+
+#[test]
+fn nested_bubble() {
+    let s = Builder::default().build(|| Histogram::new_with_max(200_000_000, 1).unwrap());
+    let sid = s.downcaster();
+    let d = Dispatch::new(s);
+    let d2 = d.clone();
+    std::thread::spawn(move || {
+        dispatcher::with_default(&d2, || {
+            trace_span!("foo").in_scope(|| {
+                trace!("foo_start");
+                std::thread::sleep(std::time::Duration::from_millis(1));
+                trace_span!("bar").in_scope(|| {
+                    trace!("bar_start");
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                    trace!("bar_end");
+                });
+                trace!("foo_end");
+            })
+        })
+    })
+    .join()
+    .unwrap();
+    sid.downcast(&d).unwrap().force_synchronize();
+    sid.downcast(&d).unwrap().with_histograms(|hs| {
+        assert_eq!(hs.len(), 2);
+        assert!(hs.contains_key("foo"));
+        assert!(hs.contains_key("bar"));
+
+        // foo membership
+        assert!(hs["foo"].contains_key("foo_start"));
+        assert!(hs["foo"].contains_key("foo_end"));
+        // foo span additionally contains bar events because of no no_span_recursion()
+        assert!(hs["foo"].contains_key("bar_start"));
+        assert!(hs["foo"].contains_key("bar_end"));
+
+        // bar membership
+        assert!(hs["bar"].contains_key("bar_start"));
+        assert!(hs["bar"].contains_key("bar_end"));
+
+        // because of no no_span_recursion(), bar_end - bar_start < foo_end - foo_start
+        let bar_t = hs["bar"]["bar_end"].max();
+        let foo_t = hs["foo"]["foo_end"].max();
+        assert!(foo_t < bar_t);
+    })
+}
+
+#[test]
 fn explicit_span_parent() {
     let s = Builder::default().build(|| Histogram::new_with_max(200_000_000, 1).unwrap());
     let sid = s.downcaster();

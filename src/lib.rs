@@ -61,7 +61,9 @@
 //! The crate does not implement a mechanism for recording the resulting histograms. Instead, you
 //! can implement this as you see fit using [`TimingSubscriber::with_histograms`]. It gives you
 //! access to the histograms for all groups. Note that you must call `refresh()` on each histogram
-//! to see its latest values (see [`hdrhistogram::SyncHistogram`]).
+//! to see its latest values (see [`hdrhistogram::SyncHistogram`]). Note that calling `refresh()`
+//! will block until the next event is posted, so you may want [`TimingSubscriber::force_synchronize`]
+//! instead.
 //!
 //! To access the histograms later, use `tracing::Dispatch::downcast_ref`. If your type is hard to
 //! name, you can use a [`TimingSubscriber::downcaster`] instead.
@@ -296,6 +298,7 @@ where
     span_group: S,
     event_group: E,
     time: quanta::Clock,
+    bubble_spans: bool,
 
     writers: ShardedLock<WriterState<S::Id, E::Id>>,
     reader: Mutex<ReaderState<S::Id, E::Id>>,
@@ -379,8 +382,12 @@ where
                 }
 
                 if let Some(ref psi) = sgi.parent {
-                    // keep recording up the stack
-                    span = psi.clone();
+                    if self.bubble_spans {
+                        // keep recording up the stack
+                        span = psi.clone();
+                    } else {
+                        return;
+                    }
                 } else {
                     return;
                 }
@@ -438,7 +445,11 @@ where
 
             // recurse to parent if any
             if let Some(ref psi) = sgi.parent {
-                span = psi.clone();
+                if self.bubble_spans {
+                    span = psi.clone();
+                } else {
+                    break;
+                }
             } else {
                 break;
             }
@@ -475,7 +486,7 @@ where
     ///
     /// Be aware that the contained histograms are not automatically updated to reflect recently
     /// gathered samples. For each histogram you wish to read from, you must call `refresh` or
-    /// `refresh_timeout` to gather up-to-date samples.
+    /// `refresh_timeout` or `force_synchronize` to gather up-to-date samples.
     ///
     /// For information about what you can do with the histograms, see the [`hdrhistogram`
     /// documentation].
@@ -574,7 +585,7 @@ where
     }
 
     fn exit(&self, span: &span::Id) {
-        // we are guaranteed that one any given thread, spans are exited in reverse order
+        // we are guaranteed that on any given thread, spans are exited in reverse order
         SPAN.with(|current_span| {
             let leaving = current_span
                 .borrow_mut()
