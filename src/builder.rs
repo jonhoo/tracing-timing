@@ -24,6 +24,7 @@ pub struct Builder<S = group::ByName, E = group::ByMessage> {
     span_group: S,
     event_group: E,
     time: quanta::Clock,
+    bubble_spans: bool,
 }
 
 impl Default for Builder<group::ByName, group::ByMessage> {
@@ -32,6 +33,7 @@ impl Default for Builder<group::ByName, group::ByMessage> {
             span_group: group::ByName,
             event_group: group::ByMessage,
             time: quanta::Clock::new(),
+            bubble_spans: true,
         }
     }
 }
@@ -45,6 +47,7 @@ impl<S, E> Builder<S, E> {
             span_group,
             event_group: self.event_group,
             time: self.time,
+            bubble_spans: self.bubble_spans,
         }
     }
 
@@ -56,13 +59,32 @@ impl<S, E> Builder<S, E> {
             span_group: self.span_group,
             event_group,
             time: self.time,
+            bubble_spans: self.bubble_spans,
         }
     }
 
     /// Set the time source to use for time measurements.
-    pub fn time(mut self, time: quanta::Clock) -> Builder<S, E> {
-        self.time = time;
-        self
+    pub fn time(self, time: quanta::Clock) -> Builder<S, E> {
+        Builder { time, ..self }
+    }
+
+    /// By default, a [`TimingSubscriber`] will record the time since the last event in *any* child
+    /// span:
+    ///
+    /// | span foo
+    /// | - event a
+    /// | | span bar
+    /// | | - event b
+    /// | - event c
+    ///
+    /// What time is recorded for event c? The default is `t_c - t_b`.
+    /// With `no_span_recursion`, event c will have `t_c - t_a`. event b will record the time since
+    /// the start of span bar.
+    pub fn no_span_recursion(self) -> Self {
+        Builder {
+            bubble_spans: false,
+            ..self
+        }
     }
 
     /// Construct a [`TimingSubscriber`] that uses the given function to construct new histograms.
@@ -94,6 +116,7 @@ impl<S, E> Builder<S, E> {
             span_group: self.span_group,
             event_group: self.event_group,
             time: self.time,
+            bubble_spans: self.bubble_spans,
             reader: super::ReaderState {
                 created: rx,
                 histograms: Default::default(),

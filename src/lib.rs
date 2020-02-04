@@ -298,6 +298,7 @@ where
     span_group: S,
     event_group: E,
     time: quanta::Clock,
+    bubble_spans: bool,
 
     writers: ShardedLock<WriterState<S::Id, E::Id>>,
     reader: Mutex<ReaderState<S::Id, E::Id>>,
@@ -381,8 +382,12 @@ where
                 }
 
                 if let Some(ref psi) = sgi.parent {
-                    // keep recording up the stack
-                    span = psi.clone();
+                    if self.bubble_spans {
+                        // keep recording up the stack
+                        span = psi.clone();
+                    } else {
+                        return;
+                    }
                 } else {
                     return;
                 }
@@ -440,7 +445,11 @@ where
 
             // recurse to parent if any
             if let Some(ref psi) = sgi.parent {
-                span = psi.clone();
+                if self.bubble_spans {
+                    span = psi.clone();
+                } else {
+                    break;
+                }
             } else {
                 break;
             }
