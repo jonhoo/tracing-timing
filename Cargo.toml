@@ -1,6 +1,6 @@
 [package]
 name = "tracing-timing"
-version = "0.2.13"
+version = "0.3.0"
 edition = "2018"
 authors = ["Jon Gjengset <jon@thesquareplanet.com>"]
 
@@ -21,7 +21,7 @@ maintenance = { status = "experimental" }
 
 [dependencies]
 tracing-core = "0.1.2"
-hdrhistogram = "6.3.3"
+hdrhistogram = "7"
 slab = "0.4"
 quanta = "0.3"
 fxhash = "0.2"
