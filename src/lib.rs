@@ -74,8 +74,13 @@
 //! let subscriber = Builder::default().build(|| Histogram::new_with_max(1_000_000, 2).unwrap());
 //! let dispatch = Dispatch::new(subscriber);
 //! // ...
-//! // code that hands off clones of the dispatch
-//! // maybe to other threads
+//! // code that hands off clones of the dispatch, maybe to other threads.
+//! // for example:
+//! tracing::dispatcher::set_global_default(dispatch.clone())
+//!   .expect("setting tracing default failed");
+//! // (note that Dispatch implements Clone,  so you can keep a handle to it!)
+//! //
+//! // then, at some later time, in some other place, you can call:
 //! // ...
 //! dispatch.downcast_ref::<TimingSubscriber>().unwrap().with_histograms(|hs| {
 //!     for (span_group, hs) in hs {
