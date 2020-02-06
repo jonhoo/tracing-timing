@@ -47,11 +47,15 @@ fn main() {
         let hs = &mut hs.get_mut("request").unwrap();
         assert_eq!(hs.len(), 2);
 
-        hs.get_mut("event examples/pretty.rs:27").unwrap().refresh();
-        hs.get_mut("event examples/pretty.rs:32").unwrap().refresh();
+        hs.get_mut("event examples/profile.rs:29")
+            .unwrap()
+            .refresh();
+        hs.get_mut("event examples/profile.rs:34")
+            .unwrap()
+            .refresh();
 
         println!("fast:");
-        let h = &hs["event examples/pretty.rs:27"];
+        let h = &hs["event examples/profile.rs:29"];
         println!(
             "mean: {:.1}µs, p50: {}µs, p90: {}µs, p99: {}µs, p999: {}µs, max: {}µs",
             h.mean() / 1000.0,
@@ -76,7 +80,7 @@ fn main() {
         }
 
         println!("\nslow:");
-        let h = &hs["event examples/pretty.rs:32"];
+        let h = &hs["event examples/profile.rs:34"];
         println!(
             "mean: {:.1}µs, p50: {}µs, p90: {}µs, p99: {}µs, p999: {}µs, max: {}µs",
             h.mean() / 1000.0,
