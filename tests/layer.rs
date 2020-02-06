@@ -1,4 +1,7 @@
+#![cfg(feature = "layer")]
+
 use tracing::*;
+use tracing_subscriber::{registry::Registry, Layer};
 use tracing_timing::*;
 
 // NOTE: leave this test first! it'll break if it moves
@@ -7,16 +10,17 @@ fn by_name() {
     let s = Builder::default()
         .spans(group::ByName)
         .events(group::ByName)
-        .build(|| Histogram::new_with_max(200_000_000, 1).unwrap());
+        .layer(|| Histogram::new_with_max(200_000_000, 1).unwrap());
     let sid = s.downcaster();
-    let d = Dispatch::new(s);
+    let d = Dispatch::new(s.with_subscriber(Registry::default()));
+    sid.downcast(&d).unwrap().with_histograms(|_| {});
     let d2 = d.clone();
     std::thread::spawn(move || {
         dispatcher::with_default(&d2, || {
             trace_span!("foo").in_scope(|| {
                 trace!("event");
             })
-        })
+        });
     })
     .join()
     .unwrap();
@@ -25,18 +29,18 @@ fn by_name() {
         let hs = &hs["foo"];
         assert_eq!(hs.len(), 1);
         #[cfg(windows)]
-        assert!(hs.contains_key("event tests\\lib.rs:17"));
+        assert!(hs.contains_key("event tests\\layer.rs:21"));
         #[cfg(not(windows))]
-        assert!(hs.contains_key("event tests/lib.rs:17"));
+        assert!(hs.contains_key("event tests/layer.rs:21"));
     })
 }
 
 #[test]
 fn downcaster() {
-    let s = Builder::default().build(|| Histogram::new_with_max(200_000_000, 1).unwrap());
+    let s = Builder::default().layer(|| Histogram::new_with_max(200_000_000, 1).unwrap());
     let sid = s.downcaster();
     let sid2 = sid.clone();
-    let d = Dispatch::new(s);
+    let d = Dispatch::new(s.with_subscriber(Registry::default()));
 
     // can downcast through a Downcaster
     sid.downcast(&d).unwrap();
@@ -50,9 +54,9 @@ fn by_target() {
     let s = Builder::default()
         .spans(group::ByTarget)
         .events(group::ByTarget)
-        .build(|| Histogram::new_with_max(200_000_000, 1).unwrap());
+        .layer(|| Histogram::new_with_max(200_000_000, 1).unwrap());
     let sid = s.downcaster();
-    let d = Dispatch::new(s);
+    let d = Dispatch::new(s.with_subscriber(Registry::default()));
     let d2 = d.clone();
     std::thread::spawn(move || {
         dispatcher::with_default(&d2, || {
@@ -65,7 +69,7 @@ fn by_target() {
     .unwrap();
     sid.downcast(&d).unwrap().with_histograms(|hs| {
         assert_eq!(hs.len(), 1);
-        let hs = &hs["lib"];
+        let hs = &hs["layer"];
         assert_eq!(hs.len(), 1);
         assert!(hs.contains_key("e"));
     })
@@ -73,9 +77,9 @@ fn by_target() {
 
 #[test]
 fn by_default() {
-    let s = Builder::default().build(|| Histogram::new_with_max(200_000_000, 1).unwrap());
+    let s = Builder::default().layer(|| Histogram::new_with_max(200_000_000, 1).unwrap());
     let sid = s.downcaster();
-    let d = Dispatch::new(s);
+    let d = Dispatch::new(s.with_subscriber(Registry::default()));
     let d2 = d.clone();
     std::thread::spawn(move || {
         dispatcher::with_default(&d2, || {
@@ -101,9 +105,9 @@ fn by_field() {
     let s = Builder::default()
         .spans(group::ByField::from("sf"))
         .events(group::ByField::from("ef"))
-        .build(|| Histogram::new_with_max(200_000_000, 1).unwrap());
+        .layer(|| Histogram::new_with_max(200_000_000, 1).unwrap());
     let sid = s.downcaster();
-    let d = Dispatch::new(s);
+    let d = Dispatch::new(s.with_subscriber(Registry::default()));
     let d2 = d.clone();
     std::thread::spawn(move || {
         dispatcher::with_default(&d2, || {
@@ -129,9 +133,9 @@ fn custom_time() {
     let (time, mock) = quanta::Clock::mock();
     let s = Builder::default()
         .time(time)
-        .build(|| Histogram::new_with_bounds(1, 16, 3).unwrap());
+        .layer(|| Histogram::new_with_bounds(1, 16, 3).unwrap());
     let sid = s.downcaster();
-    let d = Dispatch::new(s);
+    let d = Dispatch::new(s.with_subscriber(Registry::default()));
     let d2 = d.clone();
     std::thread::spawn(move || {
         dispatcher::with_default(&d2, || {
@@ -165,9 +169,9 @@ fn custom_time() {
 
 #[test]
 fn event_order() {
-    let s = Builder::default().build(|| Histogram::new_with_max(200_000_000, 1).unwrap());
+    let s = Builder::default().layer(|| Histogram::new_with_max(200_000_000, 1).unwrap());
     let sid = s.downcaster();
-    let d = Dispatch::new(s);
+    let d = Dispatch::new(s.with_subscriber(Registry::default()));
     let d2 = d.clone();
     std::thread::spawn(move || {
         dispatcher::with_default(&d2, || {
@@ -191,9 +195,9 @@ fn event_order() {
 
 #[test]
 fn samples() {
-    let s = Builder::default().build(|| Histogram::new_with_max(1_000_000, 1).unwrap());
+    let s = Builder::default().layer(|| Histogram::new_with_max(1_000_000, 1).unwrap());
     let sid = s.downcaster();
-    let d = Dispatch::new(s);
+    let d = Dispatch::new(s.with_subscriber(Registry::default()));
     let d2 = d.clone();
     let n = 100;
     std::thread::spawn(move || {
@@ -232,9 +236,9 @@ fn samples() {
 
 #[test]
 fn dupe_span() {
-    let s = Builder::default().build(|| Histogram::new_with_max(200_000_000, 1).unwrap());
+    let s = Builder::default().layer(|| Histogram::new_with_max(200_000_000, 1).unwrap());
     let sid = s.downcaster();
-    let d = Dispatch::new(s);
+    let d = Dispatch::new(s.with_subscriber(Registry::default()));
     let span = dispatcher::with_default(&d, || trace_span!("foo"));
     let d1 = d.clone();
     let span1 = span.clone();
@@ -268,9 +272,9 @@ fn dupe_span() {
 
 #[test]
 fn same_event_two_threads() {
-    let s = Builder::default().build(|| Histogram::new_with_max(200_000_000, 1).unwrap());
+    let s = Builder::default().layer(|| Histogram::new_with_max(200_000_000, 1).unwrap());
     let sid = s.downcaster();
-    let d = Dispatch::new(s);
+    let d = Dispatch::new(s.with_subscriber(Registry::default()));
     let d1 = d.clone();
     let jh1 = std::thread::spawn(move || {
         dispatcher::with_default(&d1, || {
@@ -304,9 +308,9 @@ fn same_event_two_threads() {
 fn by_field_typed() {
     let s = Builder::default()
         .events(group::ByField::from("f"))
-        .build(|| Histogram::new_with_max(200_000_000, 1).unwrap());
+        .layer(|| Histogram::new_with_max(200_000_000, 1).unwrap());
     let sid = s.downcaster();
-    let d = Dispatch::new(s);
+    let d = Dispatch::new(s.with_subscriber(Registry::default()));
     let d2 = d.clone();
     std::thread::spawn(move || {
         dispatcher::with_default(&d2, || {
@@ -331,13 +335,13 @@ fn by_field_typed() {
 
 #[test]
 fn informed_histogram_constructor() {
-    let s = Builder::default().build_informed(|s: &_, e: &_| {
+    let s = Builder::default().layer_informed(|s: &_, e: &_| {
         assert_eq!(*s, "span");
         assert_eq!(e, "event");
         Histogram::new_with_max(200_000_000, 1).unwrap()
     });
     let sid = s.downcaster();
-    let d = Dispatch::new(s);
+    let d = Dispatch::new(s.with_subscriber(Registry::default()));
     let d2 = d.clone();
     std::thread::spawn(move || {
         dispatcher::with_default(&d2, || {
@@ -361,9 +365,9 @@ fn by_closure() {
     let s = Builder::default()
         .spans(|_: &span::Attributes| ())
         .events(|_: &Event| ())
-        .build(|| Histogram::new_with_max(200_000_000, 1).unwrap());
+        .layer(|| Histogram::new_with_max(200_000_000, 1).unwrap());
     let sid = s.downcaster();
-    let d = Dispatch::new(s);
+    let d = Dispatch::new(s.with_subscriber(Registry::default()));
     let d2 = d.clone();
     std::thread::spawn(move || {
         dispatcher::with_default(&d2, || {
@@ -385,9 +389,9 @@ fn by_closure() {
 
 #[test]
 fn free_standing_event() {
-    let s = Builder::default().build(|| Histogram::new_with_max(200_000_000, 1).unwrap());
+    let s = Builder::default().layer(|| Histogram::new_with_max(200_000_000, 1).unwrap());
     let sid = s.downcaster();
-    let d = Dispatch::new(s);
+    let d = Dispatch::new(s.with_subscriber(Registry::default()));
     let d2 = d.clone();
     std::thread::spawn(move || {
         dispatcher::with_default(&d2, || {
@@ -404,9 +408,9 @@ fn free_standing_event() {
 
 #[test]
 fn nested() {
-    let s = Builder::default().build(|| Histogram::new_with_max(200_000_000, 1).unwrap());
+    let s = Builder::default().layer(|| Histogram::new_with_max(200_000_000, 1).unwrap());
     let sid = s.downcaster();
-    let d = Dispatch::new(s);
+    let d = Dispatch::new(s.with_subscriber(Registry::default()));
     let d2 = d.clone();
     std::thread::spawn(move || {
         dispatcher::with_default(&d2, || {
@@ -464,9 +468,9 @@ fn nested() {
 
 #[test]
 fn nested_diff() {
-    let s = Builder::default().build(|| Histogram::new_with_max(200_000_000, 1).unwrap());
+    let s = Builder::default().layer(|| Histogram::new_with_max(200_000_000, 1).unwrap());
     let sid = s.downcaster();
-    let d = Dispatch::new(s);
+    let d = Dispatch::new(s.with_subscriber(Registry::default()));
     let d2 = d.clone();
     std::thread::spawn(move || {
         dispatcher::with_default(&d2, || {
@@ -534,9 +538,9 @@ fn nested_diff() {
 fn nested_no_bubble() {
     let s = Builder::default()
         .no_span_recursion()
-        .build(|| Histogram::new_with_max(200_000_000, 1).unwrap());
+        .layer(|| Histogram::new_with_max(200_000_000, 1).unwrap());
     let sid = s.downcaster();
-    let d = Dispatch::new(s);
+    let d = Dispatch::new(s.with_subscriber(Registry::default()));
     let d2 = d.clone();
     std::thread::spawn(move || {
         dispatcher::with_default(&d2, || {
@@ -579,9 +583,9 @@ fn nested_no_bubble() {
 
 #[test]
 fn nested_bubble() {
-    let s = Builder::default().build(|| Histogram::new_with_max(200_000_000, 1).unwrap());
+    let s = Builder::default().layer(|| Histogram::new_with_max(200_000_000, 1).unwrap());
     let sid = s.downcaster();
-    let d = Dispatch::new(s);
+    let d = Dispatch::new(s.with_subscriber(Registry::default()));
     let d2 = d.clone();
     std::thread::spawn(move || {
         dispatcher::with_default(&d2, || {
@@ -625,9 +629,9 @@ fn nested_bubble() {
 
 #[test]
 fn explicit_span_parent() {
-    let s = Builder::default().build(|| Histogram::new_with_max(200_000_000, 1).unwrap());
+    let s = Builder::default().layer(|| Histogram::new_with_max(200_000_000, 1).unwrap());
     let sid = s.downcaster();
-    let d = Dispatch::new(s);
+    let d = Dispatch::new(s.with_subscriber(Registry::default()));
     let d2 = d.clone();
     std::thread::spawn(move || {
         dispatcher::with_default(&d2, || {
@@ -660,9 +664,9 @@ fn explicit_span_parent() {
 
 #[test]
 fn explicit_event_parent() {
-    let s = Builder::default().build(|| Histogram::new_with_max(200_000_000, 1).unwrap());
+    let s = Builder::default().layer(|| Histogram::new_with_max(200_000_000, 1).unwrap());
     let sid = s.downcaster();
-    let d = Dispatch::new(s);
+    let d = Dispatch::new(s.with_subscriber(Registry::default()));
     let d2 = d.clone();
     std::thread::spawn(move || {
         dispatcher::with_default(&d2, || {
@@ -683,7 +687,9 @@ fn explicit_event_parent() {
 #[test]
 fn tracks_current_span() {
     let d = Dispatch::new(
-        Builder::default().build(|| Histogram::new_with_max(200_000_000, 1).unwrap()),
+        Builder::default()
+            .layer(|| Histogram::new_with_max(200_000_000, 1).unwrap())
+            .with_subscriber(Registry::default()),
     );
     dispatcher::with_default(&d, || {
         let span = trace_span!("span");
@@ -696,7 +702,9 @@ fn tracks_current_span() {
 #[test]
 fn tracks_current_span_deep() {
     let d = Dispatch::new(
-        Builder::default().build(|| Histogram::new_with_max(200_000_000, 1).unwrap()),
+        Builder::default()
+            .layer(|| Histogram::new_with_max(200_000_000, 1).unwrap())
+            .with_subscriber(Registry::default()),
     );
     dispatcher::with_default(&d, || {
         trace_span!("span1").in_scope(|| {
