@@ -73,11 +73,13 @@ impl<S, E> Builder<S, E> {
     /// By default, a [`TimingSubscriber`] will record the time since the last event in *any* child
     /// span:
     ///
+    /// ```text
     /// | span foo
     /// | - event a
     /// | | span bar
     /// | | - event b
     /// | - event c
+    /// ```
     ///
     /// What time is recorded for event c? The default is `t_c - t_b`.
     /// With `no_span_recursion`, event c will have `t_c - t_a`. event b will record the time since
