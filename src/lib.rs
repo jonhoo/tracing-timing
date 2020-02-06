@@ -92,7 +92,7 @@
 //! See the documentation for [`hdrhistogram`] for more on what you can do once you have the
 //! histograms.
 //!
-//! ## Using the [`Layer`](https://docs.rs/tracing-subscriber/0.2.0-alpha.4/tracing_subscriber/layer/trait.Layer.html) API
+//! ## Using the [`Layer`](https://docs.rs/tracing-subscriber/0.2.0/tracing_subscriber/layer/trait.Layer.html) API
 //!
 //! To use the `Layer` API from `tracing-subscriber`, you first need to enable the `layer` feature.
 //! Then, use [`Builder::layer`] to construct a layer that you can mix in with other layers:
