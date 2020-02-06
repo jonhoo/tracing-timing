@@ -122,6 +122,53 @@
 //! [`Builder::events`] respectively. There are also a number of pre-defined "groupers" in the
 //! [`group`] module that cover the most common cases.
 //!
+//! ## Interpreting the output
+//!
+//! To understand the output you get from `tracing-timing`, a more complicated example might help.
+//! Consider the following tracing code:
+//!
+//! ```no_run
+//! # let rand = || 0.5;
+//! # use tracing::{trace_span, trace};
+//! loop {
+//!     trace_span!("foo").in_scope(|| {
+//!         trace!("foo_start");
+//!         std::thread::sleep(std::time::Duration::from_millis(1));
+//!         trace_span!("bar").in_scope(|| {
+//!             trace!("bar_start");
+//!             std::thread::sleep(std::time::Duration::from_millis(1));
+//!             if rand() > 0.5 {
+//!                 trace!("bar_mid1");
+//!                 std::thread::sleep(std::time::Duration::from_millis(1));
+//!             } else {
+//!                 trace!("bar_mid2");
+//!                 std::thread::sleep(std::time::Duration::from_millis(2));
+//!             }
+//!             trace!("bar_end");
+//!         });
+//!         trace!("foo_end");
+//!     })
+//! }
+//! ```
+//!
+//! What histogram data would you expect to see for each event?
+//!
+//! Well, let's walk through it. There are two span groups: "foo" and "bar". "bar" will contain
+//! entries for the events "bar_start", the "bar_mid"s, and "bar_end". "foo" will contain entries
+//! for the events "foo_start", "foo_end", **and** all the "bar" events by default (see
+//! [`Builder::no_span_recursion`]). Let's look at each of those in turn:
+//!
+//!  - "foo_start" is easy: it tracks the time since "foo" was created.
+//!  - "foo_end" is mostly easy: it tracks the time since "bar_end".
+//!    If span recursion is disabled, it instead tracks the time since "foo_start".
+//!  - "bar_start" is trickier: in "bar", it tracks the time since "bar" was entered. in "foo",
+//!    it contains the time since "foo_start".
+//!  - the "bar_mid"s are easy: they both track the time since "bar_start".
+//!  - "bar_end" is tricky: it tracks the time since whichever event of "bar_mid1" and "bar_mid2"
+//!    happened! The histogram will show a bi-modal distribution with one peak at 1ms, and one peak
+//!    at 2ms. If you want to be able to distinguish these, you will have to insert additional
+//!    tracing events inside the branches.
+//!
 //! # Timing information over time
 //!
 //! Every time you refresh a histogram, it incorporates any new timing samples recorded since the
