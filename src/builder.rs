@@ -27,6 +27,7 @@ pub struct Builder<S = group::ByName, E = group::ByMessage> {
     event_group: E,
     time: quanta::Clock,
     bubble_spans: bool,
+    span_close_events: bool,
 }
 
 impl Default for Builder<group::ByName, group::ByMessage> {
@@ -36,6 +37,7 @@ impl Default for Builder<group::ByName, group::ByMessage> {
             event_group: group::ByMessage,
             time: quanta::Clock::new(),
             bubble_spans: true,
+            span_close_events: false,
         }
     }
 }
@@ -50,6 +52,7 @@ impl<S, E> Builder<S, E> {
             event_group: self.event_group,
             time: self.time,
             bubble_spans: self.bubble_spans,
+            span_close_events: self.span_close_events,
         }
     }
 
@@ -62,6 +65,7 @@ impl<S, E> Builder<S, E> {
             event_group,
             time: self.time,
             bubble_spans: self.bubble_spans,
+            span_close_events: self.span_close_events,
         }
     }
 
@@ -87,6 +91,28 @@ impl<S, E> Builder<S, E> {
     pub fn no_span_recursion(self) -> Self {
         Builder {
             bubble_spans: false,
+            ..self
+        }
+    }
+
+    /// By default, a [`TimingSubscriber`] or [`TimingLayer`] won't record a [span closure] as an
+    /// event.
+    ///
+    /// ```text
+    /// | span foo
+    /// | - event a
+    /// | | span bar
+    /// | | - (bar closed)
+    /// | - event c
+    /// ```
+    ///
+    /// Without span close events, event c will record `t_c - t_a`. With `span_close_events`, event
+    /// c will record `t_c - t_bar_close`.
+    ///
+    /// [span closure]: https://docs.rs/tracing/0.1.25/tracing/span/index.html#closing-spans
+    pub fn span_close_events(self) -> Self {
+        Builder {
+            span_close_events: true,
             ..self
         }
     }
@@ -121,6 +147,7 @@ impl<S, E> Builder<S, E> {
             event_group: self.event_group,
             time: self.time,
             bubble_spans: self.bubble_spans,
+            span_close_events: self.span_close_events,
             reader: super::ReaderState {
                 created: rx,
                 histograms: Default::default(),
@@ -179,6 +206,7 @@ impl<S, E> Builder<S, E> {
             event_group: self.event_group,
             time: self.time,
             bubble_spans: self.bubble_spans,
+            span_close_events: self.span_close_events,
             reader: super::ReaderState {
                 created: rx,
                 histograms: Default::default(),

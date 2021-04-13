@@ -346,6 +346,7 @@ where
     event_group: E,
     time: quanta::Clock,
     bubble_spans: bool,
+    span_close_events: bool,
 
     writers: ShardedLock<WriterState<S::Id, E::Id>>,
     reader: Mutex<ReaderState<S::Id, E::Id>>,

@@ -122,6 +122,33 @@ where
             // recorded free-standing event -- ignoring
         }
     }
+
+    fn on_close(&self, id: span::Id, ctx: tracing_subscriber::layer::Context<'_, S>) {
+        if self.timing.span_close_events {
+            let span = ctx.span(&id).expect("Span not found, this is a bug");
+            let meta = span.metadata();
+            let fs = field::FieldSet::new(&["message"], meta.callsite());
+            let fld = fs.iter().next().unwrap();
+            let v = [(&fld, Some(&"close" as &dyn field::Value))];
+            let vs = fs.value_set(&v);
+            let e = Event::new_child_of(id, meta, &vs);
+            self.timing.time(&e, |on_each| {
+                {
+                    let ext = span.extensions();
+                    if !on_each(ext.get::<SpanState<SG::Id>>().unwrap()) {
+                        return;
+                    }
+                }
+
+                for span in span.parents() {
+                    let ext = span.extensions();
+                    if !on_each(ext.get::<SpanState<SG::Id>>().unwrap()) {
+                        break;
+                    }
+                }
+            });
+        }
+    }
 }
 
 /// A convenience type for getting access to [`TimingLayer`] through a `Dispatch`.
