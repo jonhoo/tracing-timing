@@ -209,7 +209,7 @@ where
                     r @ Err(_) => r.unwrap(),
                 }
             };
-        };
+        }
 
         if 1 == unwinding_lock!(self.spans.read())[span_id_to_slab_idx(&span)]
             .refcount
