@@ -209,14 +209,28 @@ where
                     r @ Err(_) => r.unwrap(),
                 }
             };
-        };
+        }
 
         if 1 == unwinding_lock!(self.spans.read())[span_id_to_slab_idx(&span)]
             .refcount
             .fetch_sub(1, atomic::Ordering::AcqRel)
         {
             // span has ended!
-            // reclaim its id
+            if self.timing.span_close_events {
+                // record a span-end event
+                let inner = unwinding_lock!(self.spans.read());
+                if let Some(span_info) = inner.get(span_id_to_slab_idx(&span)) {
+                    let meta = span_info.meta;
+                    let fs = field::FieldSet::new(&["message"], meta.callsite());
+                    let fld = fs.iter().next().unwrap();
+                    let v = [(&fld, Some(&"close" as &dyn field::Value))];
+                    let vs = fs.value_set(&v);
+                    let e = Event::new_child_of(span.clone(), meta, &vs);
+                    self.event(&e);
+                }
+            }
+
+            // reclaim the span's id
             let mut inner = unwinding_lock!(self.spans.write());
             inner.remove(span_id_to_slab_idx(&span));
             // we _keep_ the entry in inner.recorders in place, since it may be used by other spans

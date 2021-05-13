@@ -628,6 +628,54 @@ fn nested_bubble() {
 }
 
 #[test]
+fn span_close_event() {
+    let s = Builder::default()
+        .span_close_events()
+        .layer(|| Histogram::new_with_max(200_000_000, 1).unwrap());
+    let sid = s.downcaster();
+    let d = Dispatch::new(s.with_subscriber(Registry::default()));
+    let d2 = d.clone();
+    std::thread::spawn(move || {
+        dispatcher::with_default(&d2, || {
+            trace_span!("foo").in_scope(|| {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+                trace!("foo_start");
+                trace_span!("bar").in_scope(|| {
+                    trace!("bar_end");
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                });
+                trace!("foo_end");
+            })
+        })
+    })
+    .join()
+    .unwrap();
+    sid.downcast(&d).unwrap().force_synchronize();
+    sid.downcast(&d).unwrap().with_histograms(|hs| {
+        assert_eq!(hs.len(), 2);
+        assert!(hs.contains_key("foo"));
+        assert!(hs.contains_key("bar"));
+
+        // foo membership
+        assert!(hs["foo"].contains_key("foo_start"));
+        assert!(hs["foo"].contains_key("foo_end"));
+        assert!(hs["foo"].contains_key("close"));
+
+        // bar membership
+        assert!(hs["bar"].contains_key("bar_end"));
+        assert!(hs["bar"].contains_key("close"));
+
+        let foo_start = hs["foo"]["foo_start"].max();
+        let bar_end = hs["bar"]["bar_end"].max();
+        assert!(foo_start > bar_end);
+
+        let foo_end = hs["foo"]["foo_end"].max();
+        let bar_close = hs["bar"]["close"].max();
+        assert!(bar_close > foo_end);
+    })
+}
+
+#[test]
 fn explicit_span_parent() {
     let s = Builder::default().layer(|| Histogram::new_with_max(200_000_000, 1).unwrap());
     let sid = s.downcaster();
