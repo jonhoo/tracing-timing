@@ -90,7 +90,7 @@ where
         let span = ctx.span(id).unwrap();
         span.extensions_mut().insert(SpanState {
             group,
-            last_event: atomic::AtomicU64::new(self.timing.time.now()),
+            last_event: atomic::AtomicU64::new(self.timing.time.raw()),
         });
     }
 
