@@ -121,7 +121,7 @@ where
             refcount: atomic::AtomicUsize::new(1),
             state: SpanState {
                 group: group.clone(),
-                last_event: atomic::AtomicU64::new(self.timing.time.now()),
+                last_event: atomic::AtomicU64::new(self.timing.time.raw()),
             },
         };
 
