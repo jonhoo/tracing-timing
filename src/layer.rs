@@ -79,7 +79,7 @@ where
     SG::Id: Clone + Hash + Eq + Send + Sync,
     EG::Id: Clone + Hash + Eq + Send + Sync,
 {
-    fn new_span(
+    fn on_new_span(
         &self,
         attrs: &span::Attributes,
         id: &span::Id,
@@ -110,7 +110,7 @@ where
                         }
                     }
 
-                    for span in span.parents() {
+                    for span in span.scope().skip(1) {
                         let ext = span.extensions();
                         if !on_each(ext.get::<SpanState<SG::Id>>().unwrap()) {
                             break;
@@ -140,7 +140,7 @@ where
                     }
                 }
 
-                for span in span.parents() {
+                for span in span.scope().skip(1) {
                     let ext = span.extensions();
                     if !on_each(ext.get::<SpanState<SG::Id>>().unwrap()) {
                         break;
