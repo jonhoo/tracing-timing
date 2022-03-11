@@ -24,15 +24,15 @@ layer = ["tracing-subscriber"]
 default = ["layer"]
 
 [dependencies]
-tracing-core = "0.1.2"
-hdrhistogram = "7"
-slab = "0.4"
+tracing-core = "0.1"
+hdrhistogram = "7.5.0"
+slab = "0.4.1"
 quanta = "0.9"
 fxhash = "0.2"
 crossbeam = "0.8"
 indexmap = "1.0"
 doc-comment = "0.3"
-tracing-subscriber = { version = "0.3.0", optional = true }
+tracing-subscriber = { version = "0.3.8", optional = true }
 
 [dev-dependencies]
 tracing = "0.1.2"
