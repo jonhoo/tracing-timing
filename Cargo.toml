@@ -30,7 +30,7 @@ slab = "0.4.1"
 quanta = "0.9"
 fxhash = "0.2"
 crossbeam = "0.8"
-indexmap = "1.0"
+indexmap = "2.0"
 doc-comment = "0.3"
 tracing-subscriber = { version = "0.3.8", optional = true }
 
