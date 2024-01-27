@@ -5,7 +5,7 @@ use tracing_timing::{Builder, Histogram};
 
 fn main() {
     let timing_layer =
-        Builder::default().layer(|| Histogram::new_with_bounds(10_000, 1_000_000, 3).unwrap());
+        Builder::default().layer(|| Histogram::new_with_bounds(1_000_000, 100_000_000, 3).unwrap());
     let downcaster = timing_layer.downcaster();
 
     let subscriber = tracing_subscriber::registry()
@@ -20,8 +20,9 @@ fn main() {
     tracing::dispatcher::set_global_default(dispatch.clone()).unwrap();
 
     std::thread::spawn(move || {
-        info!("Info from reporter thread");
         loop {
+            // wait for first traces
+            std::thread::sleep(std::time::Duration::from_secs(1));
             downcaster
                 .downcast(&dispatch)
                 .unwrap()
@@ -30,14 +31,13 @@ fn main() {
                         for (event_group, h) in hs {
                             // make sure we see the latest samples:
                             h.refresh();
-                            // log the median:
                             info!(
-                                "[{}:{}] Median: {}ns, Min: {}ns, Max: {}ns",
+                                "[{}:{}] Median: {:.1}ms, Min: {:.1}ms, Max: {:.1}ms",
                                 span_group,
                                 event_group,
-                                h.value_at_quantile(0.5),
-                                h.min(),
-                                h.max(),
+                                h.value_at_quantile(0.5) as f32 / 1e6,
+                                h.min() as f32 / 1e6,
+                                h.max() as f32 / 1e6,
                             )
                         }
                     }
@@ -49,8 +49,8 @@ fn main() {
     std::thread::spawn(move || {
         use rand::prelude::*;
         let mut rng = thread_rng();
-        let fast = Normal::<f64>::new(100_000.0, 50_000.0).unwrap();
-        let slow = Normal::<f64>::new(500_000.0, 50_000.0).unwrap();
+        let fast = Normal::<f64>::new(10_000_000.0, 5_000_000.0).unwrap();
+        let slow = Normal::<f64>::new(50_000_000.0, 5_000_000.0).unwrap();
         info!("Normal info");
         loop {
             let fast = std::time::Duration::from_nanos(fast.sample(&mut rng).max(0.0) as u64);
