@@ -32,10 +32,10 @@ fn main() {
                             // make sure we see the latest samples:
                             h.refresh();
                             info!(
-                                "[{}:{}] Median: {:.1}ms, Min: {:.1}ms, Max: {:.1}ms",
+                                "[{}:{}] Mean: {:.1}ms, Min: {:.1}ms, Max: {:.1}ms",
                                 span_group,
                                 event_group,
-                                h.value_at_quantile(0.5) as f32 / 1e6,
+                                h.mean() as f32 / 1e6,
                                 h.min() as f32 / 1e6,
                                 h.max() as f32 / 1e6,
                             )
