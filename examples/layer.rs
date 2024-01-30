@@ -20,6 +20,10 @@ fn main() {
     tracing::dispatcher::set_global_default(dispatch.clone()).unwrap();
 
     std::thread::spawn(move || {
+        info!(
+            "{:?}: Logging tracing-timing results",
+            std::thread::current().id()
+        );
         loop {
             // wait for first traces
             std::thread::sleep(std::time::Duration::from_secs(1));
@@ -47,11 +51,14 @@ fn main() {
     });
 
     std::thread::spawn(move || {
+        info!(
+            "{:?}: Emulating work and creating traces",
+            std::thread::current().id()
+        );
         use rand::prelude::*;
         let mut rng = thread_rng();
         let fast = Normal::<f64>::new(10_000_000.0, 5_000_000.0).unwrap();
         let slow = Normal::<f64>::new(50_000_000.0, 5_000_000.0).unwrap();
-        info!("Normal info");
         loop {
             let fast = std::time::Duration::from_nanos(fast.sample(&mut rng).max(0.0) as u64);
             let slow = std::time::Duration::from_nanos(slow.sample(&mut rng).max(0.0) as u64);
