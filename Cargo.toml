@@ -29,9 +29,10 @@ doc-comment = "0.3"
 tracing-subscriber = { version = "0.3.8", optional = true }
 
 [dev-dependencies]
-tracing = "0.1.2"
+itertools = "0.14.0"
 rand = "0.9.1"
 rand_distr = "0.5.1"
+tracing = "0.1.2"
 
 [profile.release]
 debug = true
