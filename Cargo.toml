@@ -30,8 +30,8 @@ tracing-subscriber = { version = "0.3.8", optional = true }
 
 [dev-dependencies]
 tracing = "0.1.2"
-rand = "0.8"
-rand_distr = "0.4"
+rand = "0.9.1"
+rand_distr = "0.5.1"
 
 [profile.release]
 debug = true

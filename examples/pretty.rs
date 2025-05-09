@@ -10,7 +10,7 @@ fn main() {
     let d2 = d.clone();
     std::thread::spawn(move || {
         use rand::prelude::*;
-        let mut rng = thread_rng();
+        let mut rng = rand::rng();
         let fast = Normal::<f64>::new(100_000.0, 50_000.0).unwrap();
         let slow = Normal::<f64>::new(500_000.0, 50_000.0).unwrap();
         dispatcher::with_default(&d2, || loop {
