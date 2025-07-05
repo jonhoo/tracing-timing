@@ -519,6 +519,7 @@ dependencies = [
  "rand_distr",
  "slab",
  "tracing",
+ "tracing-attributes",
  "tracing-core",
  "tracing-subscriber",
 ]

@@ -34,5 +34,9 @@ rand = "0.9.1"
 rand_distr = "0.5.1"
 tracing = "0.1.2"
 
+# to make -Zminimal-versions work
+[target.'cfg(any())'.dependencies]
+tracing-attributes = { version = "0.1.24", optional = true }
+
 [profile.release]
 debug = true
