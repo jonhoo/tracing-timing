@@ -1,3 +1,5 @@
+# Tracing-timing
+
 [![Crates.io](https://img.shields.io/crates/v/tracing-timing.svg)](https://crates.io/crates/tracing-timing)
 [![Documentation](https://docs.rs/tracing-timing/badge.svg)](https://docs.rs/tracing-timing/)
 [![Codecov](https://codecov.io/github/jonhoo/tracing-timing/coverage.svg?branch=master)](https://codecov.io/gh/jonhoo/tracing-timing)

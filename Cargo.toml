@@ -13,15 +13,9 @@ repository = "https://github.com/jonhoo/tracing-timing.git"
 keywords = ["perf", "tracing", "profiling"]
 categories = ["development-tools::profiling", "visualization"]
 
-[badges]
-azure-devops = { project = "jonhoo/jonhoo", pipeline = "tracing-timing", build = "13" }
-cirrus-ci = { repository = "jonhoo/tracing-timing" }
-codecov = { repository = "jonhoo/tracing-timing", branch = "master", service = "github" }
-maintenance = { status = "experimental" }
-
 [features]
-layer = ["tracing-subscriber"]
 default = ["layer"]
+layer = ["tracing-subscriber"]
 
 [dependencies]
 tracing-core = "0.1"
@@ -35,9 +29,10 @@ doc-comment = "0.3"
 tracing-subscriber = { version = "0.3.8", optional = true }
 
 [dev-dependencies]
+itertools = "0.14.0"
+rand = "0.9.1"
+rand_distr = "0.5.1"
 tracing = "0.1.2"
-rand = "0.8"
-rand_distr = "0.4"
 
 [profile.release]
 debug = true
