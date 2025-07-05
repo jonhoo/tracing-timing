@@ -433,7 +433,7 @@ where
         S: 'a,
         F: FnMut(&mut dyn FnMut(&SpanState<S::Id>) -> bool),
     {
-        let start = self.time.start();
+        let start = self.time.raw();
         let inner = self.writers.read().unwrap();
 
         let record = move |state: &SpanState<S::Id>, r: &mut Recorder<u64>| {
@@ -442,7 +442,7 @@ where
             // effect of measuing Δt₁₂ = e₂.start - e₁.end, which is probably what users expect
             let previous = state
                 .last_event
-                .swap(self.time.end(), atomic::Ordering::AcqRel);
+                .swap(self.time.raw(), atomic::Ordering::AcqRel);
             if previous > start {
                 // someone else recorded a sample _just_ now
                 // the delta is effectively zero, but recording a 0 sample is misleading

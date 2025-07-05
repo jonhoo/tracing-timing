@@ -54,15 +54,15 @@ fn emulate_work(dispatch: Dispatch, mut recorder: Recorder<u64>) {
             let slow = Duration::from_nanos(slow.sample(&mut rng).max(0.0) as u64);
             trace_span!("request").in_scope(|| {
                 thread::sleep(fast);
-                let a = clock.start();
+                let a = clock.raw();
                 trace!("fast");
-                let b = clock.end();
-                recorder.saturating_record(b - a);
+                let b = clock.raw();
+                recorder.saturating_record(clock.delta(a, b).as_nanos() as u64);
                 thread::sleep(slow);
-                let a = clock.start();
+                let a = clock.raw();
                 trace!("slow");
-                let b = clock.end();
-                recorder.saturating_record(b - a);
+                let b = clock.raw();
+                recorder.saturating_record(clock.delta(a, b).as_nanos() as u64);
             });
         })
     });
