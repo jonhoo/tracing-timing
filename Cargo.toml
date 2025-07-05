@@ -1,7 +1,7 @@
 [package]
 name = "tracing-timing"
-version = "0.6.1"
-edition = "2018"
+version = "0.7.0"
+edition = "2021"
 authors = ["Jon Gjengset <jon@thesquareplanet.com>"]
 
 license = "MIT"
@@ -21,10 +21,10 @@ layer = ["tracing-subscriber"]
 tracing-core = "0.1.22"
 hdrhistogram = "7.5.0"
 slab = "0.4.1"
-quanta = "0.9"
+quanta = "0.12.6"
 fxhash = "0.2"
 crossbeam = "0.8"
-indexmap = "1.0"
+indexmap = "2.10.0"
 doc-comment = "0.3"
 tracing-subscriber = { version = "0.3.8", optional = true }
 
