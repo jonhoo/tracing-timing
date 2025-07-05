@@ -18,7 +18,7 @@ default = ["layer"]
 layer = ["tracing-subscriber"]
 
 [dependencies]
-tracing-core = "0.1"
+tracing-core = "0.1.22"
 hdrhistogram = "7.5.0"
 slab = "0.4.1"
 quanta = "0.9"
