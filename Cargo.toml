@@ -18,7 +18,7 @@ default = ["layer"]
 layer = ["tracing-subscriber"]
 
 [dependencies]
-tracing-core = "0.1"
+tracing-core = "0.1.22"
 hdrhistogram = "7.5.0"
 slab = "0.4.1"
 quanta = "0.9"
@@ -33,6 +33,10 @@ itertools = "0.14.0"
 rand = "0.9.1"
 rand_distr = "0.5.1"
 tracing = "0.1.2"
+
+# to make -Zminimal-versions work
+[target.'cfg(any())'.dependencies]
+tracing-attributes = { version = "0.1.24", optional = true }
 
 [profile.release]
 debug = true

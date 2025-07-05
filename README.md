@@ -2,7 +2,7 @@
 
 [![Crates.io](https://img.shields.io/crates/v/tracing-timing.svg)](https://crates.io/crates/tracing-timing)
 [![Documentation](https://docs.rs/tracing-timing/badge.svg)](https://docs.rs/tracing-timing/)
-[![Codecov](https://codecov.io/github/jonhoo/tracing-timing/coverage.svg?branch=master)](https://codecov.io/gh/jonhoo/tracing-timing)
+[![codecov](https://codecov.io/gh/jonhoo/tracing-timing/graph/badge.svg?token=12YSaiScU6)](https://codecov.io/gh/jonhoo/tracing-timing)
 [![Dependency status](https://deps.rs/repo/github/jonhoo/tracing-timing/status.svg)](https://deps.rs/repo/github/jonhoo/tracing-timing)
 
 Inter-event timing metrics on top of [`tracing`].
