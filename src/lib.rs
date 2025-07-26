@@ -18,7 +18,7 @@
 //! });
 //! ```
 //!
-//! You can produce something like this (see `examples/pretty.rs`):
+//! You can produce something like this (see [examples/pretty.rs](https://github.com/jonhoo/tracing-timing/blob/main/examples/pretty.rs)):
 //!
 //! ```text
 //! fast:
