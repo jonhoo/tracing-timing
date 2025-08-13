@@ -20,7 +20,7 @@ layer = ["tracing-subscriber"]
 [dependencies]
 tracing-core = "0.1.22"
 hdrhistogram = "7.5.0"
-slab = "0.4.1"
+slab = "0.4.11"
 quanta = "0.12.6"
 fxhash = "0.2"
 crossbeam = "0.8"
