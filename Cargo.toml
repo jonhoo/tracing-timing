@@ -26,7 +26,7 @@ fxhash = "0.2"
 crossbeam = "0.8"
 indexmap = "2.10.0"
 doc-comment = "0.3"
-tracing-subscriber = { version = "0.3.8", optional = true }
+tracing-subscriber = { version = "0.3.20", optional = true }
 
 [dev-dependencies]
 itertools = "0.14.0"
