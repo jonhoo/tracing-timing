@@ -8,7 +8,7 @@ use std::hash::Hash;
 use std::sync::atomic;
 
 thread_local! {
-    static SPAN: RefCell<Vec<span::Id>> = RefCell::new(Vec::new());
+    static SPAN: RefCell<Vec<span::Id>> = const { RefCell::new(Vec::new()) };
 }
 
 /// Timing-gathering tracing subscriber.
@@ -154,7 +154,7 @@ where
             self.timing.time(event, |on_each| {
                 let mut current = Some(span.clone());
                 while let Some(ref at) = current {
-                    let idx = span_id_to_slab_idx(&at);
+                    let idx = span_id_to_slab_idx(at);
                     let span = &inner[idx];
                     if !on_each(&span.state) {
                         break;

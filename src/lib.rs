@@ -219,7 +219,7 @@ pub type HashMap<K, V> = std::collections::HashMap<K, V, Hasher>;
 static TID: atomic::AtomicUsize = atomic::AtomicUsize::new(0);
 
 thread_local! {
-    static MYTID: RefCell<Option<usize>> = RefCell::new(None);
+    static MYTID: RefCell<Option<usize>> = const { RefCell::new(None) };
 }
 
 mod builder;
@@ -304,6 +304,7 @@ struct WriterState<S: Hash + Eq, E: Hash + Eq> {
     // TODO:
     // placing this in a ShardedLock requires that it is Sync, but it's only ever used when you're
     // holding the write lock. not sure how to describe this in the type system.
+    #[allow(clippy::type_complexity)]
     new_histogram: Box<dyn FnMut(&S, &E) -> Histogram<u64> + Send + Sync>,
 }
 
@@ -407,11 +408,7 @@ where
         // writers never take this lock, so we don't hold them up should the user call refresh(),
         let mut reader = self.reader.lock().unwrap();
         while let Ok((sid, eid, h)) = reader.created.try_recv() {
-            let h = reader
-                .histograms
-                .entry(sid)
-                .or_insert_with(IndexMap::default)
-                .insert(eid, h);
+            let h = reader.histograms.entry(sid).or_default().insert(eid, h);
             assert!(
                 h.is_none(),
                 "second histogram created for same sid/eid combination"
@@ -457,7 +454,7 @@ where
 
         // fast path: sid/eid pair is known to this thread
         let eid = self.event_group.group(event);
-        if let Some(ref tls) = inner.tls.get(&tid) {
+        if let Some(tls) = inner.tls.get(&tid) {
             // we know no-one else has our TID:
             // NOTE: it's _not_ safe to use this after we drop the lock due to force_synchronize.
             let tls = unsafe { &mut *tls.get() };
@@ -469,7 +466,7 @@ where
                 {
                     // sid/eid already known and we already have a thread-local recorder!
                     record(state, recorder);
-                } else if let Some(ref ir) = inner.idle_recorders[&state.group].get(&eid) {
+                } else if let Some(ir) = inner.idle_recorders[&state.group].get(&eid) {
                     // we didn't know about the eid, but if there's already a recorder for it,
                     // we can just create a local recorder from it and move on
                     let mut recorder = ir.recorder();
@@ -501,7 +498,7 @@ where
         let inner = &mut *inner;
 
         // if we don't have any thread-local state, construct that first
-        let tls = inner.tls.entry(tid).or_insert_with(Default::default);
+        let tls = inner.tls.entry(tid).or_default();
         // no-one else has our TID _and_ we have exclusive access to inner
         let tls = unsafe { &mut *tls.get() };
 
@@ -547,7 +544,7 @@ where
             .unwrap()
             .idle_recorders
             .entry(group)
-            .or_insert_with(HashMap::default);
+            .or_default();
     }
 }
 
