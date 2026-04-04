@@ -106,7 +106,7 @@ jobs:
         with:
           toolchain: stable
       - name: cargo install cargo-hack
-        uses: taiki-e/install-action@68675c5a5f1a6950c3975d33f3ae0ef155e5bf3d # tag=v2.68.15
+        uses: taiki-e/install-action@1ed3272338f573e042a2e6bca3893aa19f43b47a # tag=v2.71.3
         with:
           tool: cargo-hack
       # intentionally no target specifier; see https://github.com/jonhoo/rust-ci-conf/pull/4
@@ -130,5 +130,9 @@ jobs:
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # branch=master
         with:
           toolchain: ${{ matrix.msrv }}
+      - uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # tag=v5.0.4
+        with:
+          path: ~/.cargo
+          key: ${{ runner.os }}-cargo
       - name: cargo +${{ matrix.msrv }} check
         run: cargo check
