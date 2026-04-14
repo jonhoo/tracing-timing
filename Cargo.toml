@@ -30,7 +30,7 @@ tracing-subscriber = { version = "0.3.8", optional = true }
 
 [dev-dependencies]
 itertools = "0.14.0"
-rand = "0.9.1"
+rand = "0.9.3"
 rand_distr = "0.5.1"
 tracing = "0.1.2"
 
