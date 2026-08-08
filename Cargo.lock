@@ -497,6 +497,7 @@ dependencies = [
  "hdrhistogram",
  "indexmap",
  "itertools",
+ "lazy_static",
  "quanta",
  "rand",
  "rand_distr",
