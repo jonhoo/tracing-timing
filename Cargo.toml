@@ -2,6 +2,7 @@
 name = "tracing-timing"
 version = "0.7.0"
 edition = "2021"
+rust-version = "1.70.0"
 authors = ["Jon Gjengset <jon@thesquareplanet.com>"]
 
 license = "MIT"
